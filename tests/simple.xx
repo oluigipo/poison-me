@@ -1,0 +1,7 @@
+var x: int = 10;
+
+proc main()
+{
+	x += 25;
+	return x;
+}
