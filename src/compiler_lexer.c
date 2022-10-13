@@ -238,7 +238,11 @@ head += 1, token.kind = X_TokenKind_ ## kind1; \
 	result->source = source;
 	
 	Arena_Pop(scratch_arena, scratch_arena_save);
-	*out_err = error;
+	
+	if (out_err)
+		*out_err = error;
+	else
+		Assert(error.ok);
 	
 	return result;
 }

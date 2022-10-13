@@ -669,6 +669,10 @@ X_ParseFile(const X_TokenArray* tokens, const X_Allocators* allocators, X_ParseF
 			next = &parser->ast->data[*next].next;
 	}
 	
-	*out_error = parser->error;
+	if (out_error)
+		*out_error = parser->error;
+	else
+		Assert(parser->error.ok);
+	
 	return parser->ast;
 }

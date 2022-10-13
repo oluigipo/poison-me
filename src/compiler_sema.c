@@ -225,6 +225,74 @@ static bool X_SemaExpr(X_SemaContext* sema, X_AstSymbol* func, uint32 node_index
 static bool X_SemaBlock(X_SemaContext* sema, X_AstSymbol* func, uint32 node_index);
 static bool X_SemaConvertableExpr(X_SemaContext* sema, X_AstSymbol* func, uint32 type_node, uint32 expr_node);
 
+static bool
+X_SemaType(X_SemaContext* sema, X_AstSymbol* func, uint32 node_index)
+{
+	X_AstNode* node = &sema->ast->data[node_index];
+	bool ok = true;
+	
+	switch (node->kind)
+	{
+		
+		default: Unreachable(); break;
+	}
+	
+	return ok;
+}
+
+static bool
+X_SemaExpr(X_SemaContext* sema, X_AstSymbol* func, uint32 node_index)
+{
+	X_AstNode* node = &sema->ast->data[node_index];
+	bool ok = true;
+	
+	switch (node->kind)
+	{
+		case X_AstNodeKind_ExprFactorNumber: node->type = X_type_int32; break;
+		case X_AstNodeKind_ExprFactorString: node->type = X_type_string; break;
+		
+		case X_AstNodeKind_ExprFactorIdent:
+		{
+			String name = X_TokenAsString(sema->ast->tokens, node->token);
+			
+			uint32 sym_index;
+			X_AstSymbol* sym = X_SemaFindSymbolByName(sema, name, &sym_index, true);
+			
+			if (sym)
+			{
+				X_AstNode* decl_node = &sema->ast->data[sym->decl_node];
+				
+				node->ident_expr.ref_sym = sym_index;
+				node->type = decl_node->type;
+			}
+			else
+			{
+				ok = false;
+				X_SemaPushErrorFmt(sema, node_index, "undefined identifier '%.*s'", StrFmt(name));
+			}
+		} break;
+		
+		default: Unreachable(); break;
+	}
+	
+	return ok;
+}
+
+static bool
+X_SemaStmt(X_SemaContext* sema, X_AstSymbol* func, uint32 node_index)
+{
+	X_AstNode* node = &sema->ast->data[node_index];
+	bool ok = true;
+	
+	switch (node->kind)
+	{
+		
+		default: Unreachable(); break;
+	}
+	
+	return ok;
+}
+
 static void
 X_SemaDecl(X_SemaContext* sema, X_AstSymbol* func, uint32 node_index)
 {
@@ -432,5 +500,8 @@ X_SemaAst(X_Ast* ast, const X_Allocators* allocators, X_SemaAst_Error* out_error
 		node = ast->data[node].next;
 	}
 	
-	*out_error = sema->error;
+	if (out_error)
+		*out_error = sema->error;
+	else
+		Assert(sema->error.ok);
 }

@@ -40,8 +40,8 @@ X_Log(const char* fmt, ...)
 #include "compiler_defs.h"
 #include "compiler_lexer.c"
 #include "compiler_parser.c"
-#include "compiler_sema.c"
-#include "compiler_gen.c"
+//#include "compiler_sema.c"
+#include "compiler_asm.c"
 
 API int32
 X_Main(int32 argc, const char* const* argv)
@@ -52,7 +52,6 @@ X_Main(int32 argc, const char* const* argv)
 	String source;
 	X_TokenArray* tokens;
 	X_Ast* ast;
-	X_IrTree* ir;
 	
 	// NOTE(ljre): Read source file
 	{
@@ -119,6 +118,7 @@ X_Main(int32 argc, const char* const* argv)
 	}
 	
 	// NOTE(ljre): Semantic analysis
+#if 0
 	{
 		X_SemaAst_Error sema_err;
 		X_Allocators allocators = {
@@ -146,26 +146,40 @@ X_Main(int32 argc, const char* const* argv)
 		
 		Arena_Clear(scratch_arena);
 	}
+#endif
 	
 	// NOTE(ljre): Code generation
 	{
-		X_IrGenError gen_err;
 		X_Allocators allocators = {
 			.output_arena = output_arena,
 			.scratch_arena = scratch_arena,
 		};
 		
-		ir = X_IrGenFromAst(ast, &allocators, &gen_err);
+		X_Amd64Function func = {
+			.name = Str("main"),
+			
+			.size = 1,
+			.data = (X_Amd64Inst[]) {
+				{
+					X_Amd64InstKind_Mov,
+					.op[0] = { X_Amd64OperandKind_Eax, },
+					.op[1] = {
+						X_Amd64OperandKind_Imm32,
+						.imm32 = 127,
+					},
+				},
+			},
+		};
 		
-		if (!gen_err.ok)
+		String str = X_AsmGen(&func, &allocators);
+		
+		OS_Error os_err;
+		OS_WriteWholeFile(Str("output.s"), str, scratch_arena, &os_err);
+		
+		if (!os_err.ok)
 		{
-			const X_TokenArray* tokens = ast->tokens;
-			uint32 token = ast->data[gen_err.faulty_node].token;
-			
-			uint32 line, col;
-			X_GetLineColumnFromOffset(tokens->source, tokens->data[token].str_offset, &line, &col);
-			
-			X_LogError("ir gen error at (%u:%u) node %u: %.*s\n", line, col, gen_err.faulty_node, StrFmt(gen_err.why));
+			X_LogError("os error when outputting asm: %.*s\n", StrFmt(os_err.why));
+			return 1;
 		}
 	}
 	

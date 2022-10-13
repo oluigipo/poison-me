@@ -134,7 +134,7 @@ Arena_VSPrintf(Arena* arena, const char* fmt, va_list args)
 	va_list args2;
 	va_copy(args2, args);
 	
-	uintsize size = VSPrintfSize(fmt, args2);
+	uintsize size = VSPrintfSize(fmt, args2) + 1;
 	uint8* data = Arena_PushDirtyAligned(arena, size, 1);
 	
 	size = VSPrintf((char*)data, size, fmt, args);
@@ -144,6 +144,7 @@ Arena_VSPrintf(Arena* arena, const char* fmt, va_list args)
 		.data = data,
 	};
 	
+	arena->offset -= 1;
 	va_end(args2);
 	
 	return result;
