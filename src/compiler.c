@@ -80,15 +80,6 @@ X_Main(int32 argc, const char* const* argv)
 			X_LogError("tok error at (offset %zu): %.*s\n", tokenize_err.source_offset, StrFmt(tokenize_err.why));
 			return 1;
 		}
-		
-		for (uint32 i = 0; i < tokens->size; ++i)
-		{
-			String as_string = X_TokenAsString(tokens, i);
-			uint32 line, col;
-			X_GetLineColumnFromOffset(tokens->source, tokens->data[i].str_offset, &line, &col);
-			
-			X_Log("%u:%u\t%.*s\n", line, col, StrFmt(as_string));
-		}
 	}
 	
 	// NOTE(ljre): Parse source file
@@ -155,32 +146,7 @@ X_Main(int32 argc, const char* const* argv)
 			.scratch_arena = scratch_arena,
 		};
 		
-		X_Amd64Function func = {
-			.name = Str("main"),
-			
-			.size = 1,
-			.data = (X_Amd64Inst[]) {
-				{
-					X_Amd64InstKind_Mov,
-					.op[0] = { X_Amd64OperandKind_Eax, },
-					.op[1] = {
-						X_Amd64OperandKind_Imm32,
-						.imm32 = 127,
-					},
-				},
-			},
-		};
-		
-		String str = X_AsmGen(&func, &allocators);
-		
-		OS_Error os_err;
-		OS_WriteWholeFile(Str("output.s"), str, scratch_arena, &os_err);
-		
-		if (!os_err.ok)
-		{
-			X_LogError("os error when outputting asm: %.*s\n", StrFmt(os_err.why));
-			return 1;
-		}
+		X_AsmTestGen(&allocators);
 	}
 	
 	Debugbreak();

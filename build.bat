@@ -1,7 +1,7 @@
 @echo off
 
 set SOURCES=src/main.c src/os.c src/compiler.c
-set WARNINGS=-Wall -Wno-unused-function -Wno-gnu-alignof-expression
+set WARNINGS=-Wall -Wno-unused-function -Wno-gnu-alignof-expression -Wno-missing-braces
 set OPTM=
 set DEBUG=-g
 

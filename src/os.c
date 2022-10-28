@@ -137,3 +137,30 @@ OS_WriteWholeFile(String path, String data, Arena* scratch_arena, OS_Error* out_
 	return result;
 }
 
+API uint64
+OS_GetPosixTimestamp(void)
+{
+	SYSTEMTIME system_time;
+	FILETIME file_time;
+	GetSystemTime(&system_time);
+	SystemTimeToFileTime(&system_time, &file_time);
+	
+	FILETIME posix_time;
+	SYSTEMTIME posix_system_time = {
+		.wYear = 1970,
+		.wMonth = 1,
+		.wDayOfWeek = 4,
+		.wDay = 1,
+		.wHour = 0,
+		.wMinute = 0,
+		.wSecond = 0,
+		.wMilliseconds = 0,
+	};
+	SystemTimeToFileTime(&posix_system_time, &posix_time);
+	
+	uint64 result = 0;
+	result += file_time .dwLowDateTime | (uint64)file_time .dwHighDateTime << 32;
+	result -= posix_time.dwLowDateTime | (uint64)posix_time.dwHighDateTime << 32;
+	
+	return result;
+}
