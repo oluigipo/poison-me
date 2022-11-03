@@ -148,10 +148,10 @@ X_IrPrintFunction(Arena* arena, const X_IrFunction* func)
 					case X_IrType_Int32: Arena_SPrintf(arena, "int32 "); break;
 					case X_IrType_Int64: Arena_SPrintf(arena, "int64 "); break;
 					
-					case X_IrType_Int8: Arena_SPrintf(arena, "uint8 "); break;
-					case X_IrType_Int16: Arena_SPrintf(arena, "uint16 "); break;
-					case X_IrType_Int32: Arena_SPrintf(arena, "uint32 "); break;
-					case X_IrType_Int64: Arena_SPrintf(arena, "uint64 "); break;
+					case X_IrType_UInt8: Arena_SPrintf(arena, "uint8 "); break;
+					case X_IrType_UInt16: Arena_SPrintf(arena, "uint16 "); break;
+					case X_IrType_UInt32: Arena_SPrintf(arena, "uint32 "); break;
+					case X_IrType_UInt64: Arena_SPrintf(arena, "uint64 "); break;
 					
 					case X_IrType_Float32: Arena_SPrintf(arena, "float32 "); break;
 					case X_IrType_Float64: Arena_SPrintf(arena, "float64 "); break;
@@ -195,7 +195,7 @@ X_IrPrintFunction(Arena* arena, const X_IrFunction* func)
 					inst->phi2.p2.label, inst->phi2.p2.reg); break;
 				
 				case X_IrInstKind_Branch: Arena_SPrintf(arena, "br @%u", inst->branch.label1); break;
-				case X_IrInstKind_BranchIf: Arena_SPrintf(arena, "br(%%r%u) @%u or @%u", inst->branch.cond, inst->branch.label1, inst->branch.label2); break;
+				case X_IrInstKind_BranchIf: Arena_SPrintf(arena, "if(%%r%u) br @%u, br @%u", inst->branch.cond, inst->branch.label1, inst->branch.label2); break;
 				
 				case X_IrInstKind_Ret: Arena_SPrintf(arena, "ret %%r%u", inst->reg); break;
 				
@@ -213,26 +213,82 @@ X_IrPrintFunction(Arena* arena, const X_IrFunction* func)
 }
 
 //~ NOTE(ljre): Asm gen
+struct X_AsmReg
+{
+	const char* reg;
+	int32 mem_offset; // if reg == NULL
+}
+typedef X_AsmReg;
+
+struct X_AsmAssignedReg
+{
+	X_AsmReg reg;
+	X_IrReg inst;
+}
+typedef X_AsmAssignedReg;
+
 struct X_AsmGenContext
 {
 	Arena* output_arena;
 	Arena* scratch_arena;
-	
 	const X_IrFunction* func;
+	
+	uint32 available_regs_count;
+	uint32 free_regs_count;
+	uint32 using_regs_count;
+	
+	X_AsmReg* regmap; // size: func->insts_count
+	
+	const X_AsmReg* available_regs;
+	X_AsmReg* free_regs; // size: available_regs
+	X_AsmAssignedReg* using_regs; // size: func->insts_count
 }
 typedef X_AsmGenContext;
 
 static void
-X_AsmGen(X_AsmGenContext* ctx)
+X_AsmGen(X_AsmGenContext* ctx, const X_IrFunction* func)
 {
-	// count how many blocks
+	static const X_AsmReg platform_regs[] = {
+		{ "eax" },
+		{ "ebx" },
+		{ "ecx" },
+		{ "edx" },
+	};
+	
+	X_AsmReg free_regs[ArrayLength(platform_regs)];
+	MemCopy(free_regs, platform_regs, sizeof(free_regs));
+	
+	void* arena_save = Arena_End(ctx->scratch_arena);
+	
+	ctx->func = func;
+	
+	ctx->available_regs_count = ArrayLength(platform_regs);
+	ctx->using_regs_count = 0;
+	ctx->free_regs_count = ctx->available_regs_count;
+	
+	ctx->available_regs = platform_regs;
+	ctx->free_regs = free_regs;
+	ctx->regmap = Arena_Push(ctx->scratch_arena, sizeof(X_AsmReg) * func->insts_count);
+	ctx->using_regs = Arena_Push(ctx->scratch_arena, sizeof(X_AsmReg) * func->insts_count);
+	
+	// NOTE(ljre): Assign registers to ctx->regmap
+	{
+		
+	}
+	
+	// NOTE(ljre): Print asm
+	{
+		
+	}
+	
+	Arena_Pop(ctx->scratch_arena, arena_save);
 }
 
 static void
 X_AsmTestGen(const X_Allocators* allocators)
 {
-	Arena* output_arena = allocators->output_arena;
-	Arena* scratch_arena = allocators->scratch_arena;
+	Arena* const output_arena = allocators->output_arena;
+	Arena* const scratch_arena = allocators->scratch_arena;
 	Assert(output_arena && scratch_arena);
 	
 	X_IrFunction func = {
@@ -283,11 +339,9 @@ X_AsmTestGen(const X_Allocators* allocators)
 		X_AsmGenContext* const ctx = &(X_AsmGenContext) {
 			.output_arena = output_arena,
 			.scratch_arena = scratch_arena,
-			
-			.func = &func
 		};
 		
-		X_AsmGen(ctx);
+		X_AsmGen(ctx, &func);
 		
 		char* const end = Arena_End(output_arena);
 		X_Log("============[ASM]=============\n%.*s\n============================\n", end - begin, begin);
