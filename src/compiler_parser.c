@@ -73,7 +73,7 @@ X_PushParserErrorFmt(X_Parser* parser, const char* fmt, ...)
 {
 	va_list args;
 	va_start(args, fmt);
-	String why = Arena_VSPrintf(parser->scratch_arena, fmt, args);
+	String why = Arena_VPrintf(parser->scratch_arena, fmt, args);
 	va_end(args);
 	
 	X_PushParserError(parser, why);

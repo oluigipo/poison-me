@@ -29,7 +29,7 @@ SetErrorInfo(OS_Error* out_err)
 API bool
 OS_ReadWholeFile(String path, String* out_data, Arena* out_arena, OS_Error* out_err)
 {
-	MemSet(out_err, 0, sizeof(*out_err));
+	Mem_Set(out_err, 0, sizeof(*out_err));
 	out_err->ok = true;
 	
 	uint8* arena_end = Arena_End(out_arena);
@@ -80,7 +80,7 @@ OS_ReadWholeFile(String path, String* out_data, Arena* out_arena, OS_Error* out_
 	
 	CloseHandle(file);
 	
-	MemCopy(arena_end, file_data, file_size);
+	Mem_Copy(arena_end, file_data, file_size);
 	Arena_Pop(out_arena, arena_end + file_size);
 	
 	out_data->size = file_size;
@@ -92,7 +92,7 @@ OS_ReadWholeFile(String path, String* out_data, Arena* out_arena, OS_Error* out_
 API bool
 OS_WriteWholeFile(String path, String data, Arena* scratch_arena, OS_Error* out_err)
 {
-	MemSet(out_err, 0, sizeof(*out_err));
+	Mem_Set(out_err, 0, sizeof(*out_err));
 	out_err->ok = true;
 	
 	char* arena_end = Arena_End(scratch_arena);

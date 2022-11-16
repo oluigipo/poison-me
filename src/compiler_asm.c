@@ -122,41 +122,41 @@ typedef X_IrFunction;
 static void
 X_IrPrintFunction(Arena* arena, const X_IrFunction* func)
 {
-	Arena_SPrintf(arena, "%.*s():\n", StrFmt(func->name));
+	Arena_Printf(arena, "%.*s():\n", StrFmt(func->name));
 	
 	for (uint32 label_index = 0; label_index < func->labels_count; ++label_index)
 	{
-		Arena_SPrintf(arena, "@%u:\n", label_index);
+		Arena_Printf(arena, "@%u:\n", label_index);
 		
 		for (uint32 index = func->labels[label_index]; index != 0; index = index ? func->insts[index-1].next : 0)
 		{
 			X_IrInst* inst = &func->insts[index-1];
 			
-			Arena_SPrintf(arena, "\t");
+			Arena_Printf(arena, "\t");
 			
 			if (inst->kind > X_IrInstKind__BeginAssignable && inst->kind < X_IrInstKind__EndAssignable)
-				Arena_SPrintf(arena, "%%r%u = ", index);
+				Arena_Printf(arena, "%%r%u = ", index);
 			
 			if (inst->kind < X_IrInstKind__BeginControlFlow || inst->kind > X_IrInstKind__EndControlFlow)
 			{
 				switch (inst->type)
 				{
-					case X_IrType_Null: Arena_SPrintf(arena, "void "); break;
+					case X_IrType_Null: Arena_Printf(arena, "void "); break;
 					
-					case X_IrType_Int8: Arena_SPrintf(arena, "int8 "); break;
-					case X_IrType_Int16: Arena_SPrintf(arena, "int16 "); break;
-					case X_IrType_Int32: Arena_SPrintf(arena, "int32 "); break;
-					case X_IrType_Int64: Arena_SPrintf(arena, "int64 "); break;
+					case X_IrType_Int8: Arena_Printf(arena, "int8 "); break;
+					case X_IrType_Int16: Arena_Printf(arena, "int16 "); break;
+					case X_IrType_Int32: Arena_Printf(arena, "int32 "); break;
+					case X_IrType_Int64: Arena_Printf(arena, "int64 "); break;
 					
-					case X_IrType_UInt8: Arena_SPrintf(arena, "uint8 "); break;
-					case X_IrType_UInt16: Arena_SPrintf(arena, "uint16 "); break;
-					case X_IrType_UInt32: Arena_SPrintf(arena, "uint32 "); break;
-					case X_IrType_UInt64: Arena_SPrintf(arena, "uint64 "); break;
+					case X_IrType_UInt8: Arena_Printf(arena, "uint8 "); break;
+					case X_IrType_UInt16: Arena_Printf(arena, "uint16 "); break;
+					case X_IrType_UInt32: Arena_Printf(arena, "uint32 "); break;
+					case X_IrType_UInt64: Arena_Printf(arena, "uint64 "); break;
 					
-					case X_IrType_Float32: Arena_SPrintf(arena, "float32 "); break;
-					case X_IrType_Float64: Arena_SPrintf(arena, "float64 "); break;
+					case X_IrType_Float32: Arena_Printf(arena, "float32 "); break;
+					case X_IrType_Float64: Arena_Printf(arena, "float64 "); break;
 					
-					case X_IrType_Pointer: Arena_SPrintf(arena, "ptr "); break;
+					case X_IrType_Pointer: Arena_Printf(arena, "ptr "); break;
 					
 					default: Unreachable(); break;
 				}
@@ -164,40 +164,40 @@ X_IrPrintFunction(Arena* arena, const X_IrFunction* func)
 			
 			switch (inst->kind)
 			{
-				case X_IrInstKind_Null: Arena_SPrintf(arena, "nop"); break;
+				case X_IrInstKind_Null: Arena_Printf(arena, "nop"); break;
 				
-				case X_IrInstKind_Store: Arena_SPrintf(arena, "store [%%r%u], %%r%u", inst->binary.left, inst->binary.right); break;
-				case X_IrInstKind_Load: Arena_SPrintf(arena, "load [%%r%u]", inst->reg); break;
+				case X_IrInstKind_Store: Arena_Printf(arena, "store [%%r%u], %%r%u", inst->binary.left, inst->binary.right); break;
+				case X_IrInstKind_Load: Arena_Printf(arena, "load [%%r%u]", inst->reg); break;
 				
-				case X_IrInstKind_Alloca: Arena_SPrintf(arena, "alloca N * %u", inst->imm32); break;
-				case X_IrInstKind_Imm: Arena_SPrintf(arena, "imm 0x%x", inst->imm32); break;
-				case X_IrInstKind_Arg: Arena_SPrintf(arena, "arg %u", inst->imm32); break;
+				case X_IrInstKind_Alloca: Arena_Printf(arena, "alloca N * %u", inst->imm32); break;
+				case X_IrInstKind_Imm: Arena_Printf(arena, "imm 0x%x", inst->imm32); break;
+				case X_IrInstKind_Arg: Arena_Printf(arena, "arg %u", inst->imm32); break;
 				
-				case X_IrInstKind_Add: Arena_SPrintf(arena, "add %%r%u, %%r%u", inst->binary.left, inst->binary.right); break;
-				case X_IrInstKind_Sub: Arena_SPrintf(arena, "sub %%r%u, %%r%u", inst->binary.left, inst->binary.right); break;
-				case X_IrInstKind_Mul: Arena_SPrintf(arena, "mul %%r%u, %%r%u", inst->binary.left, inst->binary.right); break;
-				case X_IrInstKind_Div: Arena_SPrintf(arena, "div %%r%u, %%r%u", inst->binary.left, inst->binary.right); break;
-				case X_IrInstKind_Mod: Arena_SPrintf(arena, "mod %%r%u, %%r%u", inst->binary.left, inst->binary.right); break;
+				case X_IrInstKind_Add: Arena_Printf(arena, "add %%r%u, %%r%u", inst->binary.left, inst->binary.right); break;
+				case X_IrInstKind_Sub: Arena_Printf(arena, "sub %%r%u, %%r%u", inst->binary.left, inst->binary.right); break;
+				case X_IrInstKind_Mul: Arena_Printf(arena, "mul %%r%u, %%r%u", inst->binary.left, inst->binary.right); break;
+				case X_IrInstKind_Div: Arena_Printf(arena, "div %%r%u, %%r%u", inst->binary.left, inst->binary.right); break;
+				case X_IrInstKind_Mod: Arena_Printf(arena, "mod %%r%u, %%r%u", inst->binary.left, inst->binary.right); break;
 				
-				case X_IrInstKind_And: Arena_SPrintf(arena, "and %%r%u, %%r%u", inst->binary.left, inst->binary.right); break;
-				case X_IrInstKind_Or: Arena_SPrintf(arena, "or %%r%u, %%r%u", inst->binary.left, inst->binary.right); break;
-				case X_IrInstKind_Xor: Arena_SPrintf(arena, "xor %%r%u, %%r%u", inst->binary.left, inst->binary.right); break;
+				case X_IrInstKind_And: Arena_Printf(arena, "and %%r%u, %%r%u", inst->binary.left, inst->binary.right); break;
+				case X_IrInstKind_Or: Arena_Printf(arena, "or %%r%u, %%r%u", inst->binary.left, inst->binary.right); break;
+				case X_IrInstKind_Xor: Arena_Printf(arena, "xor %%r%u, %%r%u", inst->binary.left, inst->binary.right); break;
 				
-				case X_IrInstKind_CmpLt: Arena_SPrintf(arena, "cmplt %%r%u, %%r%u", inst->binary.left, inst->binary.right); break;
-				case X_IrInstKind_CmpLe: Arena_SPrintf(arena, "cmple %%r%u, %%r%u", inst->binary.left, inst->binary.right); break;
-				case X_IrInstKind_CmpGt: Arena_SPrintf(arena, "cmpgt %%r%u, %%r%u", inst->binary.left, inst->binary.right); break;
-				case X_IrInstKind_CmpGe: Arena_SPrintf(arena, "cmpge %%r%u, %%r%u", inst->binary.left, inst->binary.right); break;
-				case X_IrInstKind_CmpEq: Arena_SPrintf(arena, "cmpeq %%r%u, %%r%u", inst->binary.left, inst->binary.right); break;
-				case X_IrInstKind_CmpNeq: Arena_SPrintf(arena, "cmpneq %%r%u, %%r%u", inst->binary.left, inst->binary.right); break;
+				case X_IrInstKind_CmpLt: Arena_Printf(arena, "cmplt %%r%u, %%r%u", inst->binary.left, inst->binary.right); break;
+				case X_IrInstKind_CmpLe: Arena_Printf(arena, "cmple %%r%u, %%r%u", inst->binary.left, inst->binary.right); break;
+				case X_IrInstKind_CmpGt: Arena_Printf(arena, "cmpgt %%r%u, %%r%u", inst->binary.left, inst->binary.right); break;
+				case X_IrInstKind_CmpGe: Arena_Printf(arena, "cmpge %%r%u, %%r%u", inst->binary.left, inst->binary.right); break;
+				case X_IrInstKind_CmpEq: Arena_Printf(arena, "cmpeq %%r%u, %%r%u", inst->binary.left, inst->binary.right); break;
+				case X_IrInstKind_CmpNeq: Arena_Printf(arena, "cmpneq %%r%u, %%r%u", inst->binary.left, inst->binary.right); break;
 				
-				case X_IrInstKind_Phi2: Arena_SPrintf(arena, "phi [@%u - %%r%u], [@%u - %%r%u]",
+				case X_IrInstKind_Phi2: Arena_Printf(arena, "phi [@%u - %%r%u], [@%u - %%r%u]",
 					inst->phi2.p1.label, inst->phi2.p1.reg,
 					inst->phi2.p2.label, inst->phi2.p2.reg); break;
 				
-				case X_IrInstKind_Branch: Arena_SPrintf(arena, "br @%u", inst->branch.label1); break;
-				case X_IrInstKind_BranchIf: Arena_SPrintf(arena, "if(%%r%u) br @%u, br @%u", inst->branch.cond, inst->branch.label1, inst->branch.label2); break;
+				case X_IrInstKind_Branch: Arena_Printf(arena, "br @%u", inst->branch.label1); break;
+				case X_IrInstKind_BranchIf: Arena_Printf(arena, "if(%%r%u) br @%u, br @%u", inst->branch.cond, inst->branch.label1, inst->branch.label2); break;
 				
-				case X_IrInstKind_Ret: Arena_SPrintf(arena, "ret %%r%u", inst->reg); break;
+				case X_IrInstKind_Ret: Arena_Printf(arena, "ret %%r%u", inst->reg); break;
 				
 				default: Unreachable(); break;
 			}
@@ -205,11 +205,11 @@ X_IrPrintFunction(Arena* arena, const X_IrFunction* func)
 			if (inst->kind == X_IrInstKind_BranchIf)
 				index = 0;
 			
-			Arena_SPrintf(arena, "\n");
+			Arena_Printf(arena, "\n");
 		}
 	}
 	
-	Arena_SPrintf(arena, "\n");
+	Arena_Printf(arena, "\n");
 }
 
 //~ NOTE(ljre): Asm gen
@@ -256,7 +256,7 @@ X_AsmGen(X_AsmGenContext* ctx, const X_IrFunction* func)
 	};
 	
 	X_AsmReg free_regs[ArrayLength(platform_regs)];
-	MemCopy(free_regs, platform_regs, sizeof(free_regs));
+	Mem_Copy(free_regs, platform_regs, sizeof(free_regs));
 	
 	void* arena_save = Arena_End(ctx->scratch_arena);
 	

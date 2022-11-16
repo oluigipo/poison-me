@@ -225,7 +225,7 @@ head += 1, token.kind = X_TokenKind_ ## kind1; \
 		
 		token.str_size = (head - begin) - token.str_offset;
 		
-		Arena_PushStructData(output_arena, &token);
+		Arena_PushStructData(output_arena, X_Token, &token);
 	}
 	
 	X_Token* eof = Arena_PushStruct(output_arena, X_Token);

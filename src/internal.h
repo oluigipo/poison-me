@@ -1,6 +1,7 @@
 #ifndef INTERNAL_H
 #define INTERNAL_H
 
+#define COMMON_DONT_USE_CRT
 #include "common.h"
 
 #define API extern

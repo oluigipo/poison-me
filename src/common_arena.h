@@ -1,10 +1,9 @@
 #ifndef COMMON_ARENA_H
 #define COMMON_ARENA_H
 
-#define Arena_Scope(arena) for (void* end__ = Arena_End(arena); end__; Arena_Pop(arena, end__), end__ = 0)
 #define Arena_PushStruct(arena, Type) Arena_PushAligned(arena, sizeof(Type), alignof(Type))
 #define Arena_PushStructArray(arena, Type, count) Arena_PushAligned(arena, sizeof(Type)*(count), alignof(Type))
-#define Arena_PushStructData(arena, data) MemCopy(Arena_PushStruct(arena, *data), data, sizeof(*data))
+#define Arena_PushStructData(arena, Type, data) Mem_Copy(Arena_PushStruct(arena, Type), data, sizeof(Type))
 
 struct Arena
 {
@@ -129,33 +128,32 @@ Arena_Pop(Arena* arena, void* ptr)
 }
 
 static String
-Arena_VSPrintf(Arena* arena, const char* fmt, va_list args)
+Arena_VPrintf(Arena* arena, const char* fmt, va_list args)
 {
 	va_list args2;
 	va_copy(args2, args);
 	
-	uintsize size = VSPrintfSize(fmt, args2) + 1;
+	uintsize size = String_VPrintfSize(fmt, args2);
 	uint8* data = Arena_PushDirtyAligned(arena, size, 1);
 	
-	size = VSPrintf((char*)data, size, fmt, args);
+	size = String_VPrintfBuffer((char*)data, size, fmt, args);
 	
 	String result = {
 		.size = size,
 		.data = data,
 	};
 	
-	arena->offset -= 1;
 	va_end(args2);
 	
 	return result;
 }
 
 static String
-Arena_SPrintf(Arena* arena, const char* fmt, ...)
+Arena_Printf(Arena* arena, const char* fmt, ...)
 {
 	va_list args;
 	va_start(args, fmt);
-	String result = Arena_VSPrintf(arena, fmt, args);
+	String result = Arena_VPrintf(arena, fmt, args);
 	va_end(args);
 	
 	return result;
@@ -167,19 +165,19 @@ Arena_PushDirty(Arena* arena, uintsize size)
 
 static inline void*
 Arena_PushAligned(Arena* arena, uintsize size, uintsize alignment)
-{ return MemSet(Arena_PushDirtyAligned(arena, size, alignment), 0, size); }
+{ return Mem_Set(Arena_PushDirtyAligned(arena, size, alignment), 0, size); }
 
 static inline void*
 Arena_Push(Arena* arena, uintsize size)
-{ return MemSet(Arena_PushDirtyAligned(arena, size, Arena_DEFAULT_ALIGNMENT), 0, size); }
+{ return Mem_Set(Arena_PushDirtyAligned(arena, size, Arena_DEFAULT_ALIGNMENT), 0, size); }
 
 static inline void*
 Arena_PushMemory(Arena* arena, const void* buf, uintsize size)
-{ return MemCopy(Arena_PushDirtyAligned(arena, size, 1), buf, size); }
+{ return Mem_Copy(Arena_PushDirtyAligned(arena, size, 1), buf, size); }
 
 static inline void*
 Arena_PushMemoryAligned(Arena* arena, const void* buf, uintsize size, uintsize alignment)
-{ return MemCopy(Arena_PushDirtyAligned(arena, size, alignment), buf, size); }
+{ return Mem_Copy(Arena_PushDirtyAligned(arena, size, alignment), buf, size); }
 
 static inline void
 Arena_Clear(Arena* arena)

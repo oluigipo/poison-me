@@ -1,5 +1,7 @@
 #include "internal.h"
 
+#include <stdio.h>
+
 // NOTE(ljre): When a function has complex allocation requirements, it may need more than one allocator.
 //             This struct specifies those allocators for them. To know what allocators a function needs,
 //             look for a @Allocators comment right above it's implementation.
@@ -19,12 +21,18 @@ struct X_Allocators
 }
 typedef X_Allocators;
 
+static char X_log_buffer[32 << 10];
+
 static void
 X_LogError(const char* fmt, ...)
 {
 	va_list args;
 	va_start(args, fmt);
-	vfprintf(stderr, fmt, args);
+	
+	uintsize size = String_VPrintfBuffer(X_log_buffer, sizeof(X_log_buffer)-1, fmt, args);
+	X_log_buffer[size] = 0;
+	fputs(X_log_buffer, stderr);
+	
 	va_end(args);
 }
 
@@ -33,7 +41,11 @@ X_Log(const char* fmt, ...)
 {
 	va_list args;
 	va_start(args, fmt);
-	vfprintf(stdout, fmt, args);
+	
+	uintsize size = String_VPrintfBuffer(X_log_buffer, sizeof(X_log_buffer)-1, fmt, args);
+	X_log_buffer[size] = 0;
+	fputs(X_log_buffer, stderr);
+	
 	va_end(args);
 }
 
@@ -46,8 +58,8 @@ X_Log(const char* fmt, ...)
 API int32
 X_Main(int32 argc, const char* const* argv)
 {
-	Arena* output_arena = Arena_Create(Megabytes(128), Megabytes(32));
-	Arena* scratch_arena = Arena_Create(Megabytes(32), Megabytes(16));
+	Arena* output_arena = Arena_Create(128 << 20, 32 << 20);
+	Arena* scratch_arena = Arena_Create(32 << 20, 16 << 20);
 	
 	String source;
 	X_TokenArray* tokens;
@@ -77,7 +89,7 @@ X_Main(int32 argc, const char* const* argv)
 		
 		if (!tokenize_err.ok)
 		{
-			X_LogError("tok error at (offset %zu): %.*s\n", tokenize_err.source_offset, StrFmt(tokenize_err.why));
+			X_LogError("tok error at (offset %z): %.*s\n", tokenize_err.source_offset, StrFmt(tokenize_err.why));
 			return 1;
 		}
 	}

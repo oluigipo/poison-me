@@ -8,55 +8,54 @@ struct String
 }
 typedef String;
 
-#define Str(x) (String) StrInit(x)
+#ifndef __cplusplus
+#   define Str(x) (String) StrInit(x)
+#   define StrNull (String) { 0 }
+#   define StrMake(size,data) (String) { (uintsize)(size), (const uint8*)(data) }
+#else
+#   define Str(x) String StrInit(x)
+#   define StrNull String {}
+#   define StrMake(size, data) String { (uintsize)(size), (const uint8*)(data) }
+#endif
+
 #define StrInit(x) { sizeof(x) - 1, (const uint8*)(x) }
 #define StrFmt(x) (x).size, (char*)(x).data
-#define StrMake(size,data) (String) { (uintsize)(size), (const uint8*)(data) }
 #define StrMacro_(x) #x
 #define StrMacro(x) StrMacro_(x)
-#define StrNull (String) { 0 }
 
 static int32
 String_Decode(String str, int32* index)
 {
-	int32 result = 0;
-	const uint8* p = str.data + *index;
-	if (p >= str.data + str.size || !*p)
+	const uint8* head = str.data + *index;
+	const uint8* const end = str.data + str.size;
+	
+	if (head >= end)
 		return 0;
 	
-	uint8 byte = (uint8)*p++;
+	uint8 byte = *head++;
+	if (!byte || byte == 0xff)
+		return 0;
 	
-	if (byte & 0b10000000)
-	{
-		int32 size = BitClz(~byte);
-		
-		if (size == 1)
-		{
-			// NOTE(ljre): Continuation byte. Something is wrong.
-			result = 0;
-		}
-		else
-		{
-			Assert(size < 5);
-			
-			result |= byte & ((1 << (8-size)) - 1);
-			while (size > 1)
-			{
-				result <<= 6;
-				byte = (uint8)*p++;
-				result |= byte & 0b00111111;
-				
-				--size;
-			}
-		}
-	}
+	int32 size =  Mem_BitClz8(~byte);
+	if (Unlikely(size == 1 || size > 4 || head + size >= end))
+		return 0;
+	
+	uint32 result = 0;
+	if (size == 0)
+		result = byte;
 	else
 	{
-		result |= byte;
+		result |= (byte << size & 0xff) >> size;
+		
+		switch (size)
+		{
+			case 4: result = (result << 6) | (*head++ & 0x3f);
+			case 3: result = (result << 6) | (*head++ & 0x3f);
+			case 2: result = (result << 6) | (*head++ & 0x3f);
+		}
 	}
 	
-	// Return
-	*index = (int32)(p - str.data);
+	*index = (int32)(head - str.data);
 	return result;
 }
 
@@ -76,7 +75,7 @@ String_DecodedLength(String str)
 static inline int32
 String_Compare(String a, String b)
 {
-	int32 result = MemCmp(a.data, b.data, Min(a.size, b.size));
+	int32 result = Mem_Compare(a.data, b.data, Min(a.size, b.size));
 	
 	if (result == 0 && a.size != b.size)
 		return (a.size > b.size) ? 1 : -1;
@@ -84,16 +83,16 @@ String_Compare(String a, String b)
 	return result;
 }
 
-static inline int32
+static inline bool
 String_Equals(String a, String b)
 {
 	if (a.size != b.size)
 		return false;
 	
-	return MemCmp(a.data, b.data, a.size) == 0;
+	return Mem_Compare(a.data, b.data, a.size) == 0;
 }
 
-static inline bool32
+static inline bool
 String_EndsWith(String check, String s)
 {
 	if (s.size > check.size)
@@ -104,7 +103,7 @@ String_EndsWith(String check, String s)
 		.data = check.data + (check.size - s.size),
 	};
 	
-	return MemCmp(substr.data, s.data, substr.size) == 0;
+	return Mem_Compare(substr.data, s.data, substr.size) == 0;
 }
 
 #endif // COMMON_STRING_H
