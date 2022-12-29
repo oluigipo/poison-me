@@ -56,6 +56,7 @@ X_ParserHead(X_Parser* parser)
 static void
 X_PushParserError(X_Parser* parser, String why)
 {
+	parser->error.ok = false;
 	++parser->error.count;
 	X_ParserError* error = Arena_PushStruct(parser->scratch_arena, X_ParserError);
 	
@@ -635,7 +636,7 @@ X_ParseDecl(X_Parser* parser, bool is_global)
 //~ NOTE(ljre): Internal API
 // @Allocators: output_arena (output), leaky_scratch_arena (errors, temp)
 static X_Ast*
-X_ParseFile(const X_TokenArray* tokens, const X_Allocators* allocators, X_ParseFile_Error* out_error)
+X_ParseFile(const X_TokenArray* tokens, const Allocators* allocators, X_ParseFile_Error* out_error)
 {
 	Arena* output_arena = allocators->output_arena;
 	Arena* scratch_arena = allocators->leaky_scratch_arena;

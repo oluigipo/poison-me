@@ -30,6 +30,7 @@ enum X_IrInstKind
 	X_IrInstKind__BeginAssignable, //-
 	
 	X_IrInstKind_Phi2,
+	X_IrInstKind_PhiN,
 	X_IrInstKind_Load,
 	X_IrInstKind_Alloca,
 	X_IrInstKind_Imm,
@@ -101,7 +102,7 @@ struct X_IrInst
 		
 		struct { X_IrReg cond; X_IrLabel label1, label2; } branch;
 		struct { X_IrPhiArg p1, p2; } phi2;
-		struct { uint32 count, first_index; } phi;
+		struct { uint32 count, first_index; } phin;
 	};
 }
 typedef X_IrInst;
@@ -122,7 +123,7 @@ typedef X_IrFunction;
 static void
 X_IrPrintFunction(Arena* arena, const X_IrFunction* func)
 {
-	Arena_Printf(arena, "%.*s():\n", StrFmt(func->name));
+	Arena_Printf(arena, "%S():\n", func->name);
 	
 	for (uint32 label_index = 0; label_index < func->labels_count; ++label_index)
 	{
@@ -285,7 +286,7 @@ X_AsmGen(X_AsmGenContext* ctx, const X_IrFunction* func)
 }
 
 static void
-X_AsmTestGen(const X_Allocators* allocators)
+X_AsmTestGen(const Allocators* allocators)
 {
 	Arena* const output_arena = allocators->output_arena;
 	Arena* const scratch_arena = allocators->scratch_arena;
@@ -299,7 +300,7 @@ X_AsmTestGen(const X_Allocators* allocators)
 			1, 6, 8,
 		},
 		
-		.insts_count = 4,
+		.insts_count = 9,
 		.insts = (X_IrInst[]) {
 			//@0
 			[0] = { X_IrInstKind_Arg, X_IrType_Int32, 2, .imm32 = 0, },
@@ -328,7 +329,7 @@ X_AsmTestGen(const X_Allocators* allocators)
 		X_IrPrintFunction(output_arena, &func);
 		char* const end = Arena_End(output_arena);
 		
-		X_Log("============[IR]=============\n%.*s\n============================\n", end - begin, begin);
+		X_Log(scratch_arena, "============[IR]=============\n%.*s\n============================\n", end - begin, begin);
 		Arena_Pop(output_arena, begin);
 	}
 	
@@ -344,6 +345,6 @@ X_AsmTestGen(const X_Allocators* allocators)
 		X_AsmGen(ctx, &func);
 		
 		char* const end = Arena_End(output_arena);
-		X_Log("============[ASM]=============\n%.*s\n============================\n", end - begin, begin);
+		X_Log(scratch_arena, "============[ASM]=============\n%.*s\n============================\n", end - begin, begin);
 	}
 }

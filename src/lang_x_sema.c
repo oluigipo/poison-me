@@ -467,7 +467,7 @@ X_SemaDecl(X_SemaContext* sema, X_AstSymbol* func, uint32 node_index)
 
 // @Allocators: output_arena (output), leaky_scratch_arena (error, temp)
 static void
-X_SemaAst(X_Ast* ast, const X_Allocators* allocators, X_SemaAst_Error* out_error)
+X_SemaAst(X_Ast* ast, const Allocators* allocators, X_SemaAst_Error* out_error)
 {
 	Arena* output_arena = allocators->output_arena;
 	Arena* scratch_arena = allocators->leaky_scratch_arena;

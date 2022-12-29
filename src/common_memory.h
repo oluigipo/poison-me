@@ -21,6 +21,13 @@ static inline uint64 Mem_ByteSwap64(uint64 x);
 static inline uint32 Mem_ByteSwap32(uint32 x);
 static inline uint16 Mem_ByteSwap16(uint16 x);
 
+static inline void Mem_Copy8(void* dst, const void* src, uintsize count);
+static inline void Mem_Copy64(void* dst, const void* src, uintsize count);
+static inline void Mem_Copy128U(void* dst, const void* src, uintsize count);
+static inline void Mem_Copy128A(void* dst, const void* src, uintsize count);
+static inline void Mem_Copy128Ux4(void* dst, const void* src, uintsize count);
+static inline void Mem_Copy128Ax4(void* dst, const void* src, uintsize count);
+
 static inline uintsize Mem_Strlen(const char* restrict cstr);
 static inline const void* Mem_FindByte(const void* buffer, uint8 byte, uintsize size);
 
@@ -133,6 +140,26 @@ Mem_BitClz8(uint8 i)
 { return Mem_BitClz32(i) - 24; }
 
 //- Mem_PopCnt
+#ifdef __POPCNT__
+
+static inline int32
+Mem_PopCnt64(uint64 x)
+{ return (int32)_mm_popcnt_u64(x); }
+
+static inline int32
+Mem_PopCnt32(uint32 x)
+{ return (int32)_mm_popcnt_u32(x); }
+
+static inline int32
+Mem_PopCnt16(uint16 x)
+{ return (int32)_mm_popcnt_u32(x); }
+
+static inline int32
+Mem_PopCnt8(uint8 x)
+{ return (int32)_mm_popcnt_u32(x); }
+
+#else
+
 // NOTE(ljre): The 'popcnt' instruction is not actually guaranteed to be supported on all amd64 CPUs, so
 //             we'll use this implementation found on wikipedia.
 //
@@ -162,6 +189,8 @@ Mem_PopCnt16(uint16 x)
 static inline int32
 Mem_PopCnt8(uint8 x)
 { return Mem_PopCnt32(x); }
+
+#endif
 
 //- Mem_ByteSwap
 static inline uint16
@@ -215,6 +244,101 @@ Mem_ByteSwap64(uint64 x)
 #endif
 	
 	return result;
+}
+
+//- NOTE(ljre): Mem_CopyN
+static inline void
+Mem_Copy8(void* dst, const void* src, uintsize count)
+{
+	uint8* d = (uint8*)dst;
+	const uint8* s = (const uint8*)src;
+	
+#ifdef __clang__
+#   pragma clang loop vectorize(disable)
+#endif
+	while (count--)
+		*d++ = *s++;
+}
+
+static inline void
+Mem_Copy64(void* dst, const void* src, uintsize count)
+{
+	uint64* d = (uint64*)dst;
+	const uint64* s = (const uint64*)src;
+	
+#ifdef __clang__
+#   pragma clang loop vectorize(disable)
+#endif
+	while (count--)
+		*d++ = *s++;
+}
+
+static inline void
+Mem_Copy128U(void* dst, const void* src, uintsize count)
+{
+	__m128* d = (__m128*)dst;
+	const __m128* s = (const __m128*)src;
+	
+#ifdef __clang__
+#   pragma clang loop vectorize(disable)
+#endif
+	while (count--)
+		_mm_storeu_ps((float32*)d++, _mm_loadu_ps((const float32*)s++));
+}
+
+static inline void
+Mem_Copy128A(void* dst, const void* src, uintsize count)
+{
+	__m128* d = (__m128*)dst;
+	const __m128* s = (const __m128*)src;
+	
+#ifdef __clang__
+#   pragma clang loop vectorize(disable)
+#endif
+	while (count--)
+		_mm_store_ps((float32*)d++, _mm_load_ps((const float32*)s++));
+}
+
+static inline void
+Mem_Copy128Ux4(void* dst, const void* src, uintsize count)
+{
+	__m128* d = (__m128*)dst;
+	const __m128* s = (const __m128*)src;
+	
+#ifdef __clang__
+#   pragma clang loop vectorize(disable)
+#endif
+	while (count--)
+	{
+		_mm_storeu_ps((float32*)(d+0), _mm_loadu_ps((const float32*)(s+0)));
+		_mm_storeu_ps((float32*)(d+1), _mm_loadu_ps((const float32*)(s+1)));
+		_mm_storeu_ps((float32*)(d+2), _mm_loadu_ps((const float32*)(s+2)));
+		_mm_storeu_ps((float32*)(d+3), _mm_loadu_ps((const float32*)(s+3)));
+		
+		d += 4;
+		s += 4;
+	}
+}
+
+static inline void
+Mem_Copy128Ax4(void* dst, const void* src, uintsize count)
+{
+	__m128* d = (__m128*)dst;
+	const __m128* s = (const __m128*)src;
+	
+#ifdef __clang__
+#   pragma clang loop vectorize(disable)
+#endif
+	while (count--)
+	{
+		_mm_store_ps((float32*)(d+0), _mm_load_ps((const float32*)(s+0)));
+		_mm_store_ps((float32*)(d+1), _mm_load_ps((const float32*)(s+1)));
+		_mm_store_ps((float32*)(d+2), _mm_load_ps((const float32*)(s+2)));
+		_mm_store_ps((float32*)(d+3), _mm_load_ps((const float32*)(s+3)));
+		
+		d += 4;
+		s += 4;
+	}
 }
 
 //- CRT memcpy, memmove, memset & memcmp functions
@@ -488,17 +612,81 @@ static inline void*
 Mem_Set(void* restrict dst, uint8 byte, uintsize size)
 {
 	uint8* restrict d = (uint8*)dst;
+	uint64 qword;
+	__m128i xmm;
 	
-#if defined(__clang__) || defined(__GNUC__)
-	__asm__ __volatile__("rep stosb"
-		:"+D"(d), "+a"(byte), "+c"(size)
-		:: "memory");
-#elif defined(_MSC_VER)
-	__stosb(d, byte, size);
-#else
-	while (size--)
-		*d[size] = byte;
+	if (Unlikely(size == 0))
+		return dst;
+	if (size < 8)
+		goto one_by_one;
+	
+	qword = byte * 0x0101010101010101;
+	if (size < 32)
+		goto qword_by_qword;
+	
+	xmm = _mm_set1_epi64x(qword);
+	if (size < 128)
+		goto xmm2_by_xmm2;
+	
+#if defined(__clang__) || defined(__GNUC__) || defined(_MSC_VER)
+	if (Unlikely(size >= 2048))
+	{
+#   if defined(__clang__) || defined(__GNUC__)
+		__asm__ __volatile__("rep stosb"
+			:"+D"(d), "+a"(byte), "+c"(size)
+			:: "memory");
+#   elif defined(_MSC_VER)
+		__stosb(d, byte, size);
+#   endif
+		
+		return dst;
+	}
 #endif
+	
+#ifdef __clang__
+#   pragma clang loop vectorize(disable)
+#endif
+	do
+	{
+		size -= 128;
+		_mm_storeu_si128((__m128i*)(d+size+0 ), xmm);
+		_mm_storeu_si128((__m128i*)(d+size+16), xmm);
+		_mm_storeu_si128((__m128i*)(d+size+32), xmm);
+		_mm_storeu_si128((__m128i*)(d+size+48), xmm);
+		_mm_storeu_si128((__m128i*)(d+size+64), xmm);
+		_mm_storeu_si128((__m128i*)(d+size+80), xmm);
+		_mm_storeu_si128((__m128i*)(d+size+96), xmm);
+		_mm_storeu_si128((__m128i*)(d+size+112), xmm);
+	}
+	while (size >= 128);
+	
+#ifdef __clang__
+#   pragma clang loop vectorize(disable)
+#endif
+	while (size >= 32) xmm2_by_xmm2:
+	{
+		size -= 32;
+		_mm_storeu_si128((__m128i*)(d+size+0 ), xmm);
+		_mm_storeu_si128((__m128i*)(d+size+16), xmm);
+	}
+	
+#ifdef __clang__
+#   pragma clang loop vectorize(disable)
+#endif
+	while (size >= 8) qword_by_qword:
+	{
+		size -= 8;
+		*(uint64*)(d+size) = qword;
+	}
+	
+#ifdef __clang__
+#   pragma clang loop vectorize(disable)
+#endif
+	while (size >= 1) one_by_one:
+	{
+		size -= 1;
+		d[size] = byte;
+	}
 	
 	return dst;
 }
@@ -509,6 +697,9 @@ Mem_Compare(const void* left_, const void* right_, uintsize size)
 	const uint8* left = (const uint8*)left_;
 	const uint8* right = (const uint8*)right_;
 	
+#ifdef __clang__
+#   pragma clang loop vectorize(disable)
+#endif
 	while (size >= 16)
 	{
 		__m128i ldata, rdata;
@@ -535,6 +726,9 @@ Mem_Compare(const void* left_, const void* right_, uintsize size)
 		right += 16;
 	}
 	
+#ifdef __clang__
+#   pragma clang loop vectorize(disable)
+#endif
 	while (size --> 0)
 	{
 		if (Unlikely(*left != *right))
@@ -572,18 +766,24 @@ Mem_FindByte(const void* buffer, uint8 byte, uintsize size)
 	// NOTE(ljre): XMM by XMM
 	__m128i mask = _mm_set1_epi8(byte);
 	
+#ifdef __clang__
+#   pragma clang loop vectorize(disable)
+#endif
 	while (buf + 16 < end)
 	{
 		__m128i data = _mm_loadu_si128((const __m128i*)buf);
 		int32 cmp = _mm_movemask_epi8(_mm_cmpeq_epi8(data, mask));
 		
 		if (Unlikely(cmp != 0))
-			return buf + Mem_BitCtz16(cmp);
+			return buf + Mem_BitCtz16((uint16)cmp);
 		
 		buf += 16;
 	}
 	
 	// NOTE(ljre): Byte by byte
+#ifdef __clang__
+#   pragma clang loop vectorize(disable)
+#endif
 	while (buf < end) by_byte:
 	{
 		if (Unlikely(*buf == byte))

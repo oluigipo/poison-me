@@ -10,8 +10,14 @@
 static bool
 SetErrorInfo(OS_Error* out_err)
 {
-	out_err->code = GetLastError();
-	out_err->ok = (out_err->code == ERROR_SUCCESS);
+	DWORD last_error = GetLastError();
+	bool ok = (last_error == ERROR_SUCCESS);
+	
+	if (!out_err)
+		return ok;
+	
+	out_err->code = last_error;
+	out_err->ok = ok;
 	
 	switch (out_err->code)
 	{
@@ -23,15 +29,34 @@ SetErrorInfo(OS_Error* out_err)
 		default: out_err->why = Str("unknown error"); break;
 	}
 	
-	return false;
+	return ok;
 }
 
+static bool
+PrintToFile(String data, OS_Error* out_err, HANDLE file)
+{
+	uintsize size = data.size;
+	const uint8* head = data.data;
+	
+	while (size > 0)
+	{
+		DWORD bytes_written = 0;
+		DWORD to_write = Min(size, UINT32_MAX);
+		
+		if (!WriteFile(file, head, to_write, &bytes_written, NULL))
+			return SetErrorInfo(out_err);
+		
+		size -= bytes_written;
+		head += bytes_written;
+	}
+	
+	return SetErrorInfo(out_err);
+}
+
+//~ OS API
 API bool
 OS_ReadWholeFile(String path, String* out_data, Arena* out_arena, OS_Error* out_err)
 {
-	Mem_Set(out_err, 0, sizeof(*out_err));
-	out_err->ok = true;
-	
 	uint8* arena_end = Arena_End(out_arena);
 	
 	int32 wpath_len = MultiByteToWideChar(CP_UTF8, 0, (const char*)path.data, path.size, NULL, 0) + 1;
@@ -80,21 +105,18 @@ OS_ReadWholeFile(String path, String* out_data, Arena* out_arena, OS_Error* out_
 	
 	CloseHandle(file);
 	
-	Mem_Copy(arena_end, file_data, file_size);
+	Mem_Move(arena_end, file_data, file_size);
 	Arena_Pop(out_arena, arena_end + file_size);
 	
 	out_data->size = file_size;
 	out_data->data = arena_end;
 	
-	return true;
+	return SetErrorInfo(out_err);
 }
 
 API bool
 OS_WriteWholeFile(String path, String data, Arena* scratch_arena, OS_Error* out_err)
 {
-	Mem_Set(out_err, 0, sizeof(*out_err));
-	out_err->ok = true;
-	
 	char* arena_end = Arena_End(scratch_arena);
 	
 	int32 wpath_len = MultiByteToWideChar(CP_UTF8, 0, (const char*)path.data, path.size, NULL, 0) + 1;
@@ -113,23 +135,7 @@ OS_WriteWholeFile(String path, String data, Arena* scratch_arena, OS_Error* out_
 		result = SetErrorInfo(out_err);
 	else
 	{
-		DWORD bytes_written = 0;
-		uintsize size = data.size;
-		const uint8* head = data.data;
-		
-		while (size > 0)
-		{
-			DWORD to_write = Min(size, UINT32_MAX);
-			if (!WriteFile(file, head, to_write, &bytes_written, NULL))
-			{
-				result = SetErrorInfo(out_err);
-				break;
-			}
-			
-			size -= bytes_written;
-			head = head + bytes_written;
-		}
-		
+		result = PrintToFile(data, out_err, file);
 		CloseHandle(file);
 	}
 	
@@ -163,4 +169,22 @@ OS_GetPosixTimestamp(void)
 	result -= posix_time.dwLowDateTime | (uint64)posix_time.dwHighDateTime << 32;
 	
 	return result;
+}
+
+API bool
+OS_PrintStderr(String data, Arena* scratch_arena, OS_Error* out_err)
+{
+	Mem_Set(out_err, 0, sizeof(*out_err));
+	out_err->ok = true;
+	
+	return PrintToFile(data, out_err, GetStdHandle(STD_ERROR_HANDLE));
+}
+
+API bool
+OS_PrintStdout(String data, Arena* scratch_arena, OS_Error* out_err)
+{
+	Mem_Set(out_err, 0, sizeof(*out_err));
+	out_err->ok = true;
+	
+	return PrintToFile(data, out_err, GetStdHandle(STD_OUTPUT_HANDLE));
 }

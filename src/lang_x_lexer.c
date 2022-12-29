@@ -85,7 +85,7 @@ typedef X_TokenizeString_Error;
 
 // @Allocators: output_arena, scratch_arena (temp)
 static X_TokenArray*
-X_TokenizeString(String source, const X_Allocators* allocators, X_TokenizeString_Error* out_err)
+X_TokenizeString(String source, const Allocators* allocators, X_TokenizeString_Error* out_err)
 {
 	Arena* output_arena = allocators->output_arena;
 	Arena* scratch_arena = allocators->scratch_arena;

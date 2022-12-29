@@ -1,59 +1,30 @@
 #include "internal.h"
 
-#include <stdio.h>
-
-// NOTE(ljre): When a function has complex allocation requirements, it may need more than one allocator.
-//             This struct specifies those allocators for them. To know what allocators a function needs,
-//             look for a @Allocators comment right above it's implementation.
-struct X_Allocators
-{
-	// NOTE(ljre): Where the output will be allocated.
-	Arena* output_arena;
-	// NOTE(ljre): Auxiliary arena for temporary dynamic allocations. It's offset is restored when
-	//             the function returns.
-	Arena* scratch_arena;
-	// NOTE(ljre): Same as above, except it's offset is *not* restored. Needed when the function might need to
-	//             return extra data to the caller that:
-	//                 - is not referenced by the output data;
-	//                 - may be free'd before the output data.
-	//             mainly useful to store errors.
-	Arena* leaky_scratch_arena;
-}
-typedef X_Allocators;
-
-static char X_log_buffer[32 << 10];
-
 static void
-X_LogError(const char* fmt, ...)
+X_Log(Arena* scratch_arena, const char* fmt, ...)
 {
-	va_list args;
+	va_list args, args2;
 	va_start(args, fmt);
+	va_copy(args2, args);
 	
-	uintsize size = String_VPrintfBuffer(X_log_buffer, sizeof(X_log_buffer)-1, fmt, args);
-	X_log_buffer[size] = 0;
-	fputs(X_log_buffer, stderr);
+	uintsize size = String_VPrintfSize(fmt, args2);
+	char* data = Arena_PushDirtyAligned(scratch_arena, size, 1);
 	
+	String to_print = String_VPrintf(data, size, fmt, args);
+	OS_Error err;
+	
+	OS_PrintStderr(to_print, scratch_arena, &err);
+	// NOTE(ljre): Ignoring error...
+	
+	va_end(args2);
 	va_end(args);
 }
 
-static void
-X_Log(const char* fmt, ...)
-{
-	va_list args;
-	va_start(args, fmt);
-	
-	uintsize size = String_VPrintfBuffer(X_log_buffer, sizeof(X_log_buffer)-1, fmt, args);
-	X_log_buffer[size] = 0;
-	fputs(X_log_buffer, stderr);
-	
-	va_end(args);
-}
-
-#include "compiler_defs.h"
-#include "compiler_lexer.c"
-#include "compiler_parser.c"
-//#include "compiler_sema.c"
-#include "compiler_asm.c"
+#include "lang_x_defs.h"
+#include "lang_x_lexer.c"
+#include "lang_x_parser.c"
+//#include "lang_x_sema.c"
+#include "lang_x_asm.c"
 
 API int32
 X_Main(int32 argc, const char* const* argv)
@@ -72,7 +43,7 @@ X_Main(int32 argc, const char* const* argv)
 		
 		if (!os_err.ok)
 		{
-			X_LogError("error: %.*s", StrFmt(os_err.why));
+			X_Log(scratch_arena, "error: %.*s", StrFmt(os_err.why));
 			return 1;
 		}
 	}
@@ -80,7 +51,7 @@ X_Main(int32 argc, const char* const* argv)
 	// NOTE(ljre): Tokenize source file
 	{
 		X_TokenizeString_Error tokenize_err;
-		X_Allocators allocators = {
+		Allocators allocators = {
 			.output_arena = output_arena,
 			.scratch_arena = scratch_arena,
 		};
@@ -89,7 +60,7 @@ X_Main(int32 argc, const char* const* argv)
 		
 		if (!tokenize_err.ok)
 		{
-			X_LogError("tok error at (offset %z): %.*s\n", tokenize_err.source_offset, StrFmt(tokenize_err.why));
+			X_Log(scratch_arena, "tok error at (offset %z): %.*s\n", tokenize_err.source_offset, StrFmt(tokenize_err.why));
 			return 1;
 		}
 	}
@@ -97,7 +68,7 @@ X_Main(int32 argc, const char* const* argv)
 	// NOTE(ljre): Parse source file
 	{
 		X_ParseFile_Error parser_err;
-		X_Allocators allocators = {
+		Allocators allocators = {
 			.output_arena = output_arena,
 			.leaky_scratch_arena = scratch_arena,
 		};
@@ -111,7 +82,7 @@ X_Main(int32 argc, const char* const* argv)
 				uint32 line, col;
 				X_GetLineColumnFromOffset(source, tokens->data[it->token].str_offset, &line, &col);
 				
-				X_LogError("parse error at (%u:%u): %.*s\n", line, col, StrFmt(it->why));
+				X_Log(scratch_arena, "parse error at (%u:%u): %.*s\n", line, col, StrFmt(it->why));
 			}
 			
 			return 1;
@@ -124,7 +95,7 @@ X_Main(int32 argc, const char* const* argv)
 #if 0
 	{
 		X_SemaAst_Error sema_err;
-		X_Allocators allocators = {
+		Allocators allocators = {
 			.output_arena = output_arena,
 			.leaky_scratch_arena = scratch_arena,
 		};
@@ -141,7 +112,7 @@ X_Main(int32 argc, const char* const* argv)
 				uint32 line, col;
 				X_GetLineColumnFromOffset(tokens->source, tokens->data[token].str_offset, &line, &col);
 				
-				X_LogError("sema error at (%u:%u): %.*s\n", line, col, StrFmt(it->why));
+				X_Log(scratch_arena, "sema error at (%u:%u): %.*s\n", line, col, StrFmt(it->why));
 			}
 			
 			return 1;
@@ -153,7 +124,7 @@ X_Main(int32 argc, const char* const* argv)
 	
 	// NOTE(ljre): Code generation
 	{
-		X_Allocators allocators = {
+		Allocators allocators = {
 			.output_arena = output_arena,
 			.scratch_arena = scratch_arena,
 		};
