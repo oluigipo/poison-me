@@ -94,6 +94,80 @@ C_TokenizeStringLiteral(const uint8** phead, const uint8* end, uint8 close_char,
 	return result;
 }
 
+static inline uint32
+C_DecodeEscapeSequence(const uint8** phead, const uint8* end)
+{
+	const uint8* head = *phead;
+	uint32 value = 0;
+	
+	if (head[0] == '\\' && head+1 < end)
+	{
+		++head;
+		
+		switch (head[0])
+		{
+			default: value = head[0]; ++head; break;
+			case '\\': value = '\\'; ++head; break;
+			case '\'': value = '\''; ++head; break;
+			case '"': value = '"'; ++head; break;
+			case 'a': value = 0x07; ++head; break;
+			case 'b': value = 0x08; ++head; break;
+			case 'e': value = 0x1B; ++head; break;
+			case 'f': value = 0x0C; ++head; break;
+			case 'n': value = 0x0A; ++head; break;
+			case 'r': value = 0x0D; ++head; break;
+			case 't': value = 0x09; ++head; break;
+			case 'v': value = 0x0B; ++head; break;
+			case '?': value = '?'; ++head; break;
+			
+			case '0': case '1': case '2': case '3':
+			case '4': case '5': case '6': case '7':
+			{
+				value = head[0] - '0';
+				++head;
+				
+				int32 count = 1;
+				while (head < end && head[0] >= '0' && head[0] <= '7' && count < 3)
+				{
+					value *= 8;
+					value += head[0] - '0';
+					++count;
+					++head;
+				}
+			} break;
+			
+			//case 'x': case 'u': case 'U':
+			{
+				int32 hex_chars_count;
+				
+				if (0) case 'x': hex_chars_count = 2;
+				if (0) case 'u': hex_chars_count = 4;
+				if (0) case 'U': hex_chars_count = 8;
+				
+				++head;
+				
+				while (head < end && C_IsNumberChar(head[0], 16) && hex_chars_count --> 0)
+				{
+					uint8 bias;
+					
+					if (head[0] >= 'a' && head[0] <= 'f')
+						bias = 'a';
+					else if (head[0] >= 'A' && head[0] <= 'F')
+						bias = 'A';
+					else
+						bias = '0';
+					
+					value *= 16;
+					value += head[0] - bias;
+				}
+			} break;
+		}
+	}
+	
+	*phead = head;
+	return value;
+}
+
 static inline C_TokenKind
 C_FindKeywordByName(String name)
 {

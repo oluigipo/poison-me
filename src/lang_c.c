@@ -25,7 +25,7 @@ C_LogFmt(Arena* scratch_arena, const char* fmt, ...)
 static void
 C_Log(Arena* scratch_arena, String str)
 {
-	OS_PrintStderr(str, scratch_arena, NULL);
+	OS_PrintStderr(str, scratch_arena, &(OS_Error) { 0 });
 }
 
 static void
@@ -67,7 +67,7 @@ API int32
 C_Main(int32 argc, const char* const* argv)
 {
 	//- basic options
-	String filename = StrInit("tests/main.c");
+	String filename = StrInit("tests/pp-test.c");
 	
 	const String include_dirs[] = {
 		StrInit("include/"),
@@ -117,15 +117,12 @@ C_Main(int32 argc, const char* const* argv)
 		.loc_arena = Arena_Create(512ull << 20, 8ull << 20),
 		.array_arena = Arena_Create(512ull << 20, 8ull << 20),
 		.tree_arena = Arena_Create(512ull << 20, 8ull << 20),
-		.string_arena = Arena_Create(512ull << 20, 8ull << 20),
+		.stage_arena = Arena_Create(512ull << 20, 8ull << 20),
 		.scratch_arena = Arena_Create(512ull << 20, 8ull << 20),
 		
 		.main_file_name = filename,
 		.options = &options,
 	};
-	
-	tu.macros_hashmap = C_AllocHashMapChunk(tu.tree_arena, 18, sizeof(C_Macro));
-	tu.files_hashmap = C_AllocHashMapChunk(tu.tree_arena, 18, sizeof(C_LoadedFile));
 	
 	//- preprocess
 	if (tu.error_count == 0)
@@ -145,7 +142,7 @@ C_Main(int32 argc, const char* const* argv)
 		C_LogFmt(tu.scratch_arena, "\tloc_arena:     %z of %z\n", tu.loc_arena->offset, tu.loc_arena->commited);
 		C_LogFmt(tu.scratch_arena, "\tarray_arena:   %z of %z\n", tu.array_arena->offset, tu.array_arena->commited);
 		C_LogFmt(tu.scratch_arena, "\ttree_arena:    %z of %z\n", tu.tree_arena->offset, tu.tree_arena->commited);
-		C_LogFmt(tu.scratch_arena, "\tstring_arena:  %z of %z\n", tu.string_arena->offset, tu.string_arena->commited);
+		C_LogFmt(tu.scratch_arena, "\tstage_arena:  %z of %z\n", tu.stage_arena->offset, tu.stage_arena->commited);
 		C_LogFmt(tu.scratch_arena, "\tscratch_arena: %z of %z\n", tu.scratch_arena->offset, tu.scratch_arena->commited);
 	}
 	

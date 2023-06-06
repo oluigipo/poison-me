@@ -39,6 +39,8 @@ API bool OS_WriteWholeFile(String path, String data, Arena* scratch_arena, OS_Er
 API uint64 OS_GetPosixTimestamp(void);
 API bool OS_PrintStderr(String data, Arena* scratch_arena, OS_Error* out_err);
 API bool OS_PrintStdout(String data, Arena* scratch_arena, OS_Error* out_err);
+API String OS_ResolveFullPath(String path, Arena* output_arena, OS_Error* out_err);
+API void OS_SplitPath(String fullpath, String* out_folder, String* out_file);
 
 //- X API
 API int32 X_Main(int32 argc, const char* const* argv);

@@ -11,6 +11,7 @@ struct C_PpContext
 	C_TokenStream output;
 	
 	C_LoadedFile* current_file;
+	C_SourceLocation* included_from;
 	
 	uint32 last_loc_index;
 	
@@ -26,6 +27,9 @@ enum C_PpBuiltinMacro
 	C_PpBuiltinMacro_File,
 }
 typedef C_PpBuiltinMacro;
+
+static void C_PpPreprocessFile(C_PpContext* pp, C_LoadedFile* file, C_SourceLocation* included_from);
+static bool C_PpTryToExpandMacro(C_PpContext* pp, C_PpTokenReader* rd, uint32* out_added_token_count);
 
 //~ NOTE(ljre): Utils
 static void
@@ -80,6 +84,33 @@ C_PpFindStringInArray(const String* array, uint32 size, String target)
 }
 
 static String
+C_PpUnstringify(Arena* arena, String str)
+{
+	Assert(str.size >= 2 && str.data[0] == '"' && str.data[str.size-1] == '"');
+	
+	uint8* const begin = Arena_End(arena);
+	
+	const uint8* str_head = str.data + 1;
+	const uint8* const str_end = str.data + str.size - 1;
+	
+	for (; str_head < str_end; ++str_head)
+	{
+		uint32 value = 0;
+		
+		if (str_head[0] == '\\')
+			value = C_DecodeEscapeSequence(&str_head, str_end);
+		else
+			value = str_head[0];
+		
+		uint8 truncated = (uint8)value;
+		Arena_PushData(arena, &truncated);
+	}
+	
+	uint8* const end = Arena_End(arena);
+	return StrRange(begin, end);
+}
+
+static String
 C_PpStringifyToken(Arena* arena, const C_PreprocToken* token)
 {
 	uint8* const begin = Arena_End(arena);
@@ -118,10 +149,10 @@ C_PpConcatTokens(C_PpContext* pp, const C_PreprocToken* left, const C_PreprocTok
 {
 	C_PreprocTokenList** head = out_tokens;
 	
-	uint8* const begin = Arena_End(pp->tu->string_arena);
-	C_PpStringifyToken(pp->tu->string_arena, left);
-	C_PpStringifyToken(pp->tu->string_arena, right);
-	uint8* const end = Arena_End(pp->tu->string_arena);
+	uint8* const begin = Arena_End(pp->tu->stage_arena);
+	C_PpStringifyToken(pp->tu->stage_arena, left);
+	C_PpStringifyToken(pp->tu->stage_arena, right);
+	uint8* const end = Arena_End(pp->tu->stage_arena);
 	
 	C_PreprocTokenList* list = C_TokenizeForPreproc(pp->tu, pp->tu->scratch_arena, StrRange(begin, end), NULL);
 	*head = list;
@@ -241,7 +272,7 @@ C_PpWriteToken(C_PpContext* pp, const C_PreprocToken* pptok, C_SourceLocation* i
 	C_SourceLocation* loc = &(C_SourceLocation) {
 		.included_from = included_from,
 		.expanded_from = expanded_from,
-		.file = pp->current_file,
+		.filepath = pp->current_file->path,
 		.leading_spaces = pptok->leading_spaces,
 		.line = pptok->line,
 		.col = pptok->col,
@@ -258,7 +289,10 @@ C_PpWriteToken(C_PpContext* pp, const C_PreprocToken* pptok, C_SourceLocation* i
 			kind = kw;
 	}
 	
-	Arena_PushData(pp->tu->array_arena, &(C_Token) { kind, pptok->as_string.size, pptok->as_string.data, loc });
+	String as_string = Arena_PushString(pp->tu->tree_arena, pptok->as_string);
+	Assert(as_string.size <= UINT32_MAX);
+	
+	Arena_PushData(pp->tu->array_arena, (&(C_Token) { kind, as_string.size, as_string.data, loc }));
 	pp->output.size++;
 }
 
@@ -273,18 +307,18 @@ C_PpFindMacro(C_PpContext* pp, String name)
 	for (;;)
 	{
 		index = Hash_Msi(map->log2cap, hash, index);
-		C_Macro* macro = (C_Macro*)map->memory + index;
+		C_Macro** pmacro = (C_Macro**)map->memory + index;
 		
-		if (String_Equals(name, macro->name))
+		if (*pmacro)
 		{
-			if (!macro->is_defined)
-				continue;
+			C_Macro* macro = *pmacro;
 			
-			return macro;
+			if (String_Equals(name, macro->name))
+				return macro;
+			
+			if (macro->is_defined && macro->name.size > 0)
+				continue;
 		}
-		
-		if (macro->name.size > 0)
-			continue;
 		
 		if (map->size >= 1 << (map->log2cap-1))
 		{
@@ -311,22 +345,27 @@ C_PpInsertMacroToHashmap(C_PpContext* pp, const C_Macro* macro_def)
 	for (;;)
 	{
 		index = Hash_Msi(map->log2cap, hash, index);
-		C_Macro* macro = (C_Macro*)map->memory + index;
+		C_Macro** pmacro = (C_Macro**)map->memory + index;
 		
-		if (String_Equals(macro->name, macro_def->name))
-			Assert(false);
-		
-		if (macro->name.size > 0)
-			continue;
+		if (*pmacro)
+		{
+			C_Macro* macro = *pmacro;
+			
+			if (String_Equals(macro->name, macro_def->name))
+				Assert(false);
+			
+			if (macro->is_defined && macro->name.size > 0)
+				continue;
+		}
 		
 		if (map->size >= 1 << (map->log2cap-1))
 		{
 			if (!map->next)
 			{
-				map->next = C_AllocHashMapChunk(pp->tu->tree_arena, Min(map->log2cap+1, 20), sizeof(C_Macro));
+				map->next = C_AllocHashMapChunk(pp->tu->stage_arena, Min(map->log2cap+1, 20), sizeof(C_Macro*));
 				map = map->next;
 				index = Hash_Msi(map->log2cap, hash, (int32)hash);
-				macro = (C_Macro*)map->memory + index;
+				pmacro = (C_Macro**)map->memory + index;
 				
 				goto insert_in_map;
 			}
@@ -337,9 +376,10 @@ C_PpInsertMacroToHashmap(C_PpContext* pp, const C_Macro* macro_def)
 		}
 		
 		insert_in_map:;
-		*macro = *macro_def;
+		C_Macro* macro = Arena_PushStructData(pp->tu->stage_arena, C_Macro, macro_def);
 		macro->is_defined = true;
 		
+		*pmacro = macro;
 		return macro;
 	}
 	
@@ -363,8 +403,6 @@ C_PpPredefineMacros(C_PpContext* pp, const String* macros, uintsize count)
 {
 	// TODO
 }
-
-static bool C_PpTryToExpandMacro(C_PpContext* pp, C_PpTokenReader* rd, uint32* out_added_token_count);
 
 static uint32
 C_PpExpandMacro(C_PpContext* pp, C_PpTokenReader* rd, C_Macro* macro)
@@ -392,13 +430,13 @@ C_PpExpandMacro(C_PpContext* pp, C_PpTokenReader* rd, C_Macro* macro)
 			case C_PpBuiltinMacro_Line:
 			{
 				tok.kind = C_TokenKind_IntLiteral;
-				tok.as_string = Arena_Printf(pp->tu->string_arena, "%u", tok.line);
+				tok.as_string = Arena_Printf(pp->tu->stage_arena, "%u", tok.line);
 			} break;
 			
 			case C_PpBuiltinMacro_File:
 			{
 				tok.kind = C_TokenKind_StringLiteral;
-				tok.as_string = C_PpStringifyString(pp->tu->string_arena, pp->current_file->path);
+				tok.as_string = C_PpStringifyString(pp->tu->stage_arena, pp->current_file->path);
 			} break;
 			
 			default: Unreachable(); break;
@@ -414,7 +452,7 @@ C_PpExpandMacro(C_PpContext* pp, C_PpTokenReader* rd, C_Macro* macro)
 	C_SourceLocation* this_loc = &(C_SourceLocation) {
 		.included_from = included_from,
 		.expanded_from = expanded_from,
-		.file = pp->current_file,
+		.filepath = pp->current_file->path,
 		.leading_spaces = rd->tok.leading_spaces,
 		.line = rd->tok.line,
 		.col = rd->tok.col,
@@ -501,16 +539,6 @@ C_PpExpandMacro(C_PpContext* pp, C_PpTokenReader* rd, C_Macro* macro)
 			C_PreprocTokenList* replacement = NULL;
 			C_PreprocTokenList** head = &replacement;
 			
-			struct CameFromArg typedef CameFromArg;
-			struct CameFromArg
-			{
-				CameFromArg* next;
-				C_PreprocTokenList** tokens;
-				uint32 count;
-			};
-			
-			CameFromArg* top_came_from_arg = NULL;
-			
 			for (int32 i = 0; i < macro->inst_count; ++i)
 			{
 				C_MacroInst* inst = &macro->insts[i];
@@ -547,19 +575,21 @@ C_PpExpandMacro(C_PpContext* pp, C_PpTokenReader* rd, C_Macro* macro)
 							it = it->next;
 						}
 						
+						C_PreprocTokenList** itp = first;
 						for (int32 i = 0; i < count; ++i)
 						{
-							C_PpTokenReader* local_rd = &(C_PpTokenReader) { *first, (*first)->tok };
-							if ((*first)->tok.kind == C_TokenKind_Identifier)
+							if ((*itp)->tok.kind == C_TokenKind_Identifier)
 							{
-								uint32 count2;
-								if (C_PpTryToExpandMacro(pp, local_rd, &count2))
+								C_PpTokenReader* local_rd = &(C_PpTokenReader) { *itp, (*itp)->tok };
+								uint32 added_count;
+								
+								if (C_PpTryToExpandMacro(pp, local_rd, &added_count))
 								{
-									*first = local_rd->list;
-									if (i == count-1)
+									*itp = local_rd->list;
+									if (i == count - 1)
 									{
-										head = first;
-										while (count2--)
+										head = itp;
+										while (added_count --> 0)
 											head = &(*head)->next;
 									}
 									else
@@ -570,22 +600,12 @@ C_PpExpandMacro(C_PpContext* pp, C_PpTokenReader* rd, C_Macro* macro)
 								}
 							}
 							else
-								first = &(*first)->next;
+								itp = &(*itp)->next;
 						}
 						
 						if (*first)
 						{
 							(*first)->tok.leading_spaces = inst->argument.leading_spaces;
-							
-							CameFromArg* came_from_arg = Arena_PushStruct(pp->tu->scratch_arena, CameFromArg);
-							came_from_arg->next = top_came_from_arg;
-							came_from_arg->tokens = first;
-							came_from_arg->count = 0;
-							
-							for (C_PreprocTokenList** it = first; it != head; it = &(*it)->next)
-								++came_from_arg->count;
-							
-							top_came_from_arg = came_from_arg;
 						}
 					} break;
 					
@@ -597,7 +617,7 @@ C_PpExpandMacro(C_PpContext* pp, C_PpTokenReader* rd, C_Macro* macro)
 						C_PreprocTokenList* tokens = args[param_index].value;
 						uint32 count = args[param_index].count;
 						
-						String str = C_PpStringifyTokens(pp->tu->string_arena, tokens, count);
+						String str = C_PpStringifyTokens(pp->tu->stage_arena, tokens, count);
 						
 						C_PreprocTokenList* tok = Arena_PushStruct(pp->tu->scratch_arena, C_PreprocTokenList);
 						tok->next = NULL;
@@ -753,16 +773,6 @@ C_PpExpandMacro(C_PpContext* pp, C_PpTokenReader* rd, C_Macro* macro)
 						if (*first)
 						{
 							(*first)->tok.leading_spaces = inst->glue_args.leading_spaces;
-							
-							CameFromArg* came_from_arg = Arena_PushStruct(pp->tu->scratch_arena, CameFromArg);
-							came_from_arg->next = top_came_from_arg;
-							came_from_arg->tokens = first;
-							came_from_arg->count = 0;
-							
-							for (C_PreprocTokenList** it = first; it != head; it = &(*it)->next)
-								++came_from_arg->count;
-							
-							top_came_from_arg = came_from_arg;
 						}
 					} break;
 					
@@ -774,48 +784,6 @@ C_PpExpandMacro(C_PpContext* pp, C_PpTokenReader* rd, C_Macro* macro)
 			}
 			
 			Assert(replacement);
-			
-			if (false) for (CameFromArg* arg_it = top_came_from_arg; arg_it; arg_it = arg_it->next)
-			{
-				C_PpTokenReader* local_rd = &(C_PpTokenReader) { *arg_it->tokens, (*arg_it->tokens)->tok };
-				C_PreprocTokenList** local_head = arg_it->tokens;
-				uint32 count = arg_it->count;
-				
-				while (count --> 0)
-				{
-					bool should_eat = true;
-					
-					if (local_rd->tok.kind == C_TokenKind_Identifier)
-					{
-						uint32 added = 0;
-						bool expanded = C_PpTryToExpandMacro(pp, local_rd, &added);
-						
-						if (expanded)
-						{
-							*local_head = local_rd->list;
-							
-							if (count == 0 && arg_it == top_came_from_arg)
-							{
-								C_PreprocTokenList** itp = local_head;
-								
-								for (int32 i = 0; i < added; ++i)
-									itp = &(*itp)->next;
-								
-								head = itp;
-							}
-							
-							count += added;
-							should_eat = false;
-						}
-					}
-					
-					if (should_eat)
-					{
-						local_head = &(*local_head)->next;
-						C_PpNextToken(local_rd);
-					}
-				}
-			}
 			
 			*head = rd->list;
 			rd->list = replacement;
@@ -859,7 +827,7 @@ C_PpTryToExpandMacro(C_PpContext* pp, C_PpTokenReader* rd, uint32* out_added_tok
 
 //~ NOTE(ljre): File handling
 static C_LoadedFile*
-C_PpLoadFile(C_PpContext* pp, String path)
+C_PpTryToLoadFile(C_PpContext* pp, String path)
 {
 	C_HashMapChunk* map = pp->tu->files_hashmap;
 	uint64 hash = Hash_StringHash(path);
@@ -868,25 +836,30 @@ C_PpLoadFile(C_PpContext* pp, String path)
 	for (;;)
 	{
 		index = Hash_Msi(map->log2cap, hash, index);
-		C_LoadedFile* file = (C_LoadedFile*)map->memory + index;
+		C_LoadedFile** pfile = (C_LoadedFile**)map->memory + index;
 		
-		if (file->path_hash == hash && String_Equals(file->path, path))
+		if (*pfile)
 		{
-			if (!file->tokens)
-				return NULL;
+			C_LoadedFile* file = *pfile;
 			
-			return file;
+			if (file->path_hash == hash && String_Equals(file->path, path))
+			{
+				if (!file->tokens)
+					return NULL;
+				
+				return file;
+			}
+			
+			if (file->path.size != 0)
+				continue;
 		}
-		
-		if (file->path.size != 0)
-			continue;
 		
 		if (map->size >= 1u << map->log2cap)
 		{
 			if (!map->next)
 			{
 				uint32 cap = Min(map->log2cap + 1, 20);
-				map->next = C_AllocHashMapChunk(pp->tu->tree_arena, cap, sizeof(C_LoadedFile));
+				map->next = C_AllocHashMapChunk(pp->tu->stage_arena, cap, sizeof(C_LoadedFile*));
 			}
 			
 			map = map->next;
@@ -894,16 +867,19 @@ C_PpLoadFile(C_PpContext* pp, String path)
 			continue;
 		}
 		
-		file->path = path;
-		
 		String contents = { 0 };
-		if (!OS_ReadWholeFile(path, &contents, pp->tu->string_arena, NULL))
+		if (!OS_ReadWholeFile(path, &contents, pp->tu->stage_arena, NULL))
 			return NULL;
 		
+		C_LoadedFile* file = Arena_PushStruct(pp->tu->stage_arena, C_LoadedFile);
+		*pfile = file;
+		
+		file->path_hash = hash;
+		file->path = Arena_PushString(pp->tu->tree_arena, path);
 		file->contents = contents;
 		
 		C_Error error = { 0 };
-		C_PreprocTokenList* tokens = C_TokenizeForPreproc(pp->tu, pp->tu->tree_arena, contents, &error);
+		C_PreprocTokenList* tokens = C_TokenizeForPreproc(pp->tu, pp->tu->stage_arena, contents, &error);
 		
 		if (!C_IsOk(&error))
 			return NULL;
@@ -915,6 +891,46 @@ C_PpLoadFile(C_PpContext* pp, String path)
 	return NULL;
 }
 
+static C_LoadedFile*
+C_TryToIncludeFile(C_PpContext* pp, String path, bool relative)
+{
+	if (relative)
+	{
+		C_LoadedFile* file = NULL;
+		
+		for Arena_TempScope(pp->tu->scratch_arena)
+		{
+			String curr_folder;
+			OS_SplitPath(pp->current_file->path, &curr_folder, NULL);
+			
+			String fullpath = Arena_Printf(pp->tu->scratch_arena, "%S/%S", curr_folder, path);
+			file = C_PpTryToLoadFile(pp, fullpath);
+		}
+		
+		if (file)
+			return file;
+	}
+	
+	// TODO(ljre): Cache non-relative includes by name so we don't have to try every possible path for it.
+	uintsize count = pp->tu->options->include_dirs_count;
+	const String* dirs = pp->tu->options->include_dirs;
+	C_LoadedFile* file = NULL;
+	
+	for (intsize i = 0; i < count; ++i)
+	{
+		for Arena_TempScope(pp->tu->scratch_arena)
+		{
+			String fullpath = Arena_Printf(pp->tu->scratch_arena, "%S/%S", dirs[i], path);
+			file = C_PpTryToLoadFile(pp, fullpath);
+		}
+		
+		if (file)
+			break;
+	}
+	
+	return file;
+}
+
 //~ NOTE(ljre): Preproc directives
 static C_Macro*
 C_PpDefineMacro(C_PpContext* pp, C_PpTokenReader* rd)
@@ -923,11 +939,21 @@ C_PpDefineMacro(C_PpContext* pp, C_PpTokenReader* rd)
 	if (rd->tok.kind != C_TokenKind_Identifier)
 		C_PpPushError(pp, rd, "expected identifier in macro definition.");
 	
+	C_SourceLocation* loc = &(C_SourceLocation) {
+		.filepath = pp->current_file->path,
+		.leading_spaces = rd->tok.leading_spaces,
+		.line = rd->tok.line,
+		.col = rd->tok.col,
+	};
+	
+	loc = Arena_PushStructData(pp->tu->loc_arena, C_SourceLocation, loc);
+	
 	C_Macro macro = {
 		.name = rd->tok.as_string,
 		.is_func_like = false,
 		.has_va_args = false,
 		.param_count = 0,
+		.definition_loc = loc,
 	};
 	
 	C_PpNextToken(rd);
@@ -967,7 +993,7 @@ C_PpDefineMacro(C_PpContext* pp, C_PpTokenReader* rd)
 		C_PpEatToken(pp, rd, C_TokenKind_RightParen);
 		
 		macro.param_count = param_count;
-		macro.insts = Arena_EndAligned(pp->tu->tree_arena, alignof(C_MacroInst));
+		macro.insts = Arena_EndAligned(pp->tu->stage_arena, alignof(C_MacroInst));
 		
 		int32 running_copy = 0;
 		C_MacroInst* last_inst = NULL;
@@ -991,7 +1017,7 @@ C_PpDefineMacro(C_PpContext* pp, C_PpTokenReader* rd)
 					if (rd->tok.kind == C_TokenKind_Identifier && (param2_index = C_PpFindStringInArray(params, param_count, rd->tok.as_string)) != -1)
 					{
 						running_copy = 0;
-						last_inst = Arena_PushStruct(pp->tu->tree_arena, C_MacroInst);
+						last_inst = Arena_PushStruct(pp->tu->stage_arena, C_MacroInst);
 						last_inst->kind = C_MacroInstKind_GlueArgs;
 						last_inst->glue_args.param1_index = param_index;
 						last_inst->glue_args.param2_index = param2_index;
@@ -1003,7 +1029,7 @@ C_PpDefineMacro(C_PpContext* pp, C_PpTokenReader* rd)
 					else
 					{
 						running_copy = 0;
-						last_inst = Arena_PushStruct(pp->tu->tree_arena, C_MacroInst);
+						last_inst = Arena_PushStruct(pp->tu->stage_arena, C_MacroInst);
 						last_inst->kind = C_MacroInstKind_GlueLeft;
 						last_inst->glue.param_index = param_index;
 						last_inst->glue.token = rd->list;
@@ -1022,7 +1048,7 @@ C_PpDefineMacro(C_PpContext* pp, C_PpTokenReader* rd)
 					if (rd->tok.kind == C_TokenKind_Identifier && (param_index = C_PpFindStringInArray(params, param_count, rd->tok.as_string)) != -1)
 					{
 						running_copy = 0;
-						last_inst = Arena_PushStruct(pp->tu->tree_arena, C_MacroInst);
+						last_inst = Arena_PushStruct(pp->tu->stage_arena, C_MacroInst);
 						last_inst->kind = C_MacroInstKind_GlueRight;
 						last_inst->glue.param_index = param_index;
 						last_inst->glue.token = token_to_concat;
@@ -1058,7 +1084,7 @@ C_PpDefineMacro(C_PpContext* pp, C_PpTokenReader* rd)
 				}
 				
 				running_copy = 0;
-				last_inst = Arena_PushStruct(pp->tu->tree_arena, C_MacroInst);
+				last_inst = Arena_PushStruct(pp->tu->stage_arena, C_MacroInst);
 				last_inst->kind = C_MacroInstKind_Stringify;
 				last_inst->stringify.param_index = param_index;
 				last_inst->stringify.leading_spaces = rd->tok.leading_spaces;
@@ -1075,7 +1101,7 @@ C_PpDefineMacro(C_PpContext* pp, C_PpTokenReader* rd)
 				if (param_index != -1)
 				{
 					running_copy = 0;
-					last_inst = Arena_PushStruct(pp->tu->tree_arena, C_MacroInst);
+					last_inst = Arena_PushStruct(pp->tu->stage_arena, C_MacroInst);
 					last_inst->kind = C_MacroInstKind_Argument;
 					last_inst->argument.param_index = param_index;
 					last_inst->argument.leading_spaces = rd->tok.leading_spaces;
@@ -1088,16 +1114,16 @@ C_PpDefineMacro(C_PpContext* pp, C_PpTokenReader* rd)
 			// NOTE(ljre): Otherwise, just copy the token
 			if (running_copy == 0)
 			{
-				last_inst = Arena_PushStruct(pp->tu->tree_arena, C_MacroInst);
+				last_inst = Arena_PushStruct(pp->tu->stage_arena, C_MacroInst);
 				last_inst->kind = C_MacroInstKind_CopyTokens;
 				last_inst->copy.tokens = rd->list;
 			}
 			
-			last_inst->copy.tokens_count += 1;
+			running_copy = ++last_inst->copy.tokens_count;
 			C_PpNextToken(rd);
 		}
 		
-		macro.inst_count = (C_MacroInst*)Arena_End(pp->tu->tree_arena) - macro.insts;
+		macro.inst_count = (C_MacroInst*)Arena_End(pp->tu->stage_arena) - macro.insts;
 	}
 	else
 	{
@@ -1130,16 +1156,94 @@ C_PpUndefineMacro(C_PpContext* pp, C_PpTokenReader* rd)
 	return true;
 }
 
+static void
+C_PpInclude(C_PpContext* pp, C_PpTokenReader* rd)
+{
+	C_PreprocToken peek = C_PpPeekToken(rd);
+	C_LoadedFile* file = NULL;
+	String include_name = StrNull;
+	uint32 line = rd->tok.line;
+	
+	for Arena_TempScope(pp->tu->scratch_arena)
+	{
+		if (rd->tok.kind == C_TokenKind_StringLiteral && (!peek.kind || peek.kind == C_TokenKind_NewLine))
+		{
+			include_name = C_PpUnstringify(pp->tu->scratch_arena, rd->tok.as_string);
+			file = C_TryToIncludeFile(pp, include_name, true);
+		}
+		else if (rd->tok.kind == C_TokenKind_LThan)
+		{
+			C_PpNextToken(rd);
+			
+			C_PreprocTokenList* first = rd->list;
+			uint32 count = 0;
+			bool error = false;
+			
+			while (rd->tok.kind && rd->tok.kind != C_TokenKind_GThan)
+			{
+				if (rd->tok.kind == C_TokenKind_NewLine)
+				{
+					error = true;
+					C_PpPushError(pp, rd, "unexpected end-of-line in include file name.");
+					break;
+				}
+				
+				++count;
+				C_PpNextToken(rd);
+			}
+			
+			if (!error)
+			{
+				include_name = C_PpStringifyTokens(pp->tu->scratch_arena, first, count);
+				file = C_TryToIncludeFile(pp, include_name, false);
+			}
+		}
+		else
+		{
+			// TODO: SLOW PATH
+			Assert(false);
+		}
+	}
+	
+	if (file)
+	{
+		if (!(file->flags & C_LoadedFileFlags_PragmaOnce))
+		{
+			C_SourceLocation* included_from = &(C_SourceLocation) {
+				.included_from = pp->included_from,
+				.expanded_from = NULL,
+				.filepath = file->path,
+				.leading_spaces = 0,
+				.line = line,
+				.col = 1,
+			};
+			
+			included_from = Arena_PushStructData(pp->tu->loc_arena, C_SourceLocation, included_from);
+			C_PpPreprocessFile(pp, file, included_from);
+		}
+	}
+	else
+		C_PpPushError(pp, rd, "could not include '%S'.", include_name);
+}
+
+static void
+C_PpIfdef(C_PpContext* pp, C_PpTokenReader* rd)
+{
+	
+}
+
 //~ NOTE(ljre): Main preprocess procs
 static void
-C_PpPreprocessFile(C_PpContext* pp, String filename, C_SourceLocation* included_from)
+C_PpPreprocessFile(C_PpContext* pp, C_LoadedFile* file, C_SourceLocation* included_from)
 {
-	C_LoadedFile* previous_file = pp->current_file;
-	C_LoadedFile* file = C_PpLoadFile(pp, filename);
 	if (!file)
 		return;
 	
+	C_LoadedFile* previous_file = pp->current_file;
+	C_SourceLocation* previous_included_from = pp->included_from;
 	pp->current_file = file;
+	pp->included_from = included_from;
+	
 	C_PpTokenReader* rd = &(C_PpTokenReader) { file->tokens, file->tokens->tok };
 	
 	for (Arena_Savepoint scratch_save = Arena_Save(pp->tu->scratch_arena);
@@ -1197,6 +1301,15 @@ C_PpPreprocessFile(C_PpContext* pp, String filename, C_SourceLocation* included_
 			C_PpNextToken(rd);
 			C_PpUndefineMacro(pp, rd);
 		}
+		else if (String_Equals(directive, Str("include")))
+		{
+			C_PpNextToken(rd);
+			C_PpInclude(pp, rd);
+		}
+		else if (String_Equals(directive, Str("ifdef")))
+		{
+			C_PpIfdef(pp, rd);
+		}
 		else
 		{
 			C_PpPushError(pp, rd, "unknown preprocessor directive '%S'\n", directive);
@@ -1207,6 +1320,7 @@ C_PpPreprocessFile(C_PpContext* pp, String filename, C_SourceLocation* included_
 	}
 	
 	pp->current_file = previous_file;
+	pp->included_from = previous_included_from;
 }
 
 static void
@@ -1221,12 +1335,23 @@ C_Preprocess(C_TuContext* tu)
 		},
 	};
 	
-	C_PpDefineBuiltinMacros(pp);
-	C_PpPredefineMacros(pp, tu->options->predefined_macros, tu->options->predefined_macros_count);
-	
-	C_PpPreprocessFile(pp, tu->main_file_name, NULL);
-	
-	tu->preprocessed_source = pp->output;
+	for Arena_TempScope(tu->stage_arena)
+	{
+		tu->macros_hashmap = C_AllocHashMapChunk(tu->stage_arena, 18, sizeof(C_Macro*));
+		tu->files_hashmap = C_AllocHashMapChunk(tu->stage_arena, 18, sizeof(C_LoadedFile));
+		
+		C_PpDefineBuiltinMacros(pp);
+		C_PpPredefineMacros(pp, tu->options->predefined_macros, tu->options->predefined_macros_count);
+		
+		C_LoadedFile* first_file = C_PpTryToLoadFile(pp, tu->main_file_name);
+		if (first_file)
+		{
+			C_PpPreprocessFile(pp, first_file, NULL);
+			tu->preprocessed_source = pp->output;
+		}
+		else
+			C_PpPushError(pp, NULL, "could not load input file '%S'.", tu->main_file_name);
+	}
 }
 
 //~ NOTE(ljre): Stringify token stream
@@ -1240,7 +1365,7 @@ C_WritePreprocessedTokensGnu(C_TuContext* tu, Arena* arena)
 	uint8* const begin = Arena_End(arena);
 	C_SourceLocation* last_loc = NULL;
 	
-	Arena_Printf(arena, "# %u \"%S\"\n", stream->tokens[0].loc->line, stream->tokens[0].loc->file->path);
+	Arena_Printf(arena, "# %u \"%S\"\n", stream->tokens[0].loc->line, stream->tokens[0].loc->filepath);
 	
 	for (int32 i = 0; i < stream->size; ++i)
 	{
@@ -1253,14 +1378,14 @@ C_WritePreprocessedTokensGnu(C_TuContext* tu, Arena* arena)
 		
 		if (last_loc)
 		{
-			if (loc->file != last_loc->file)
-				Arena_Printf(arena, "\n# %u \"%S\"\n", tok.loc->line, tok.loc->file->path);
+			if (loc->filepath.data != last_loc->filepath.data)
+				Arena_Printf(arena, "\n# %u \"%S\"\n", tok.loc->line, tok.loc->filepath);
 			else if (loc->line != last_loc->line)
 			{
 				uint32 diff = loc->line - last_loc->line;
 				
 				if (diff > 4)
-					Arena_Printf(arena, "\n# %u \"%S\"\n", loc->line, loc->file->path);
+					Arena_Printf(arena, "\n# %u \"%S\"\n", loc->line, loc->filepath);
 				else
 					Arena_PushMemory(arena, "\n\n\n\n", diff);
 			}

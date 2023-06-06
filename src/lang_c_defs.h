@@ -347,7 +347,7 @@ struct C_SourceLocation
 {
 	C_SourceLocation* included_from;
 	C_SourceLocation* expanded_from;
-	C_LoadedFile* file;
+	String filepath;
 	uint32 leading_spaces;
 	uint32 line, col;
 };
@@ -455,8 +455,8 @@ struct C_TuContext
 	Arena* loc_arena;
 	Arena* array_arena;
 	Arena* tree_arena;
-	Arena* string_arena;
 	
+	Arena* stage_arena;
 	Arena* scratch_arena;
 	
 	String main_file_name;

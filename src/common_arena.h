@@ -3,14 +3,16 @@
 
 #define Arena_PushStruct(arena, Type) \
 ((Type*)Arena_PushAligned(arena, sizeof(Type), alignof(Type)))
-#define Arena_PushStructData(arena, Type, ...) \
-((Type*)Mem_Copy(Arena_PushStruct(arena, Type), __VA_ARGS__, sizeof(Type)))
+#define Arena_PushStructData(arena, Type, data) \
+((Type*)Mem_Copy(Arena_PushStruct(arena, Type), data, sizeof(Type)))
+#define Arena_PushStructInit(arena, Type, ...) \
+((Type*)Arena_PushMemoryAligned(arena, &(Type) __VA_ARGS__, sizeof(Type), alignof(Type)))
 #define Arena_PushArray(arena, Type, count) \
 ((Type*)Arena_PushAligned(arena, sizeof(Type)*(count), alignof(Type)))
 #define Arena_PushArrayData(arena, Type, data, count) \
 ((Type*)Mem_Copy(Arena_PushArray(arena, Type, count), data, sizeof(Type)*(count)))
-#define Arena_PushData(arena, ...) \
-Mem_Copy(Arena_PushDirtyAligned(arena, sizeof*(__VA_ARGS__), 1), __VA_ARGS__, sizeof*(__VA_ARGS__))
+#define Arena_PushData(arena, data) \
+Mem_Copy(Arena_PushDirtyAligned(arena, sizeof*(data), 1), data, sizeof*(data))
 #define Arena_PushDataArray(arena, data, count) \
 Mem_Copy(Arena_PushDirtyAligned(arena, sizeof*(data)*(count), 1), data, sizeof*(data)*(count))
 #define Arena_TempScope(arena_) \
@@ -52,6 +54,7 @@ static inline void* Arena_PushMemory(Arena* arena, const void* buf, uintsize siz
 static inline void* Arena_PushMemoryAligned(Arena* arena, const void* buf, uintsize size, uintsize alignment);
 static inline String Arena_PushString(Arena* arena, String str);
 static inline String Arena_PushStringAligned(Arena* arena, String str, uintsize alignment);
+static inline const char* Arena_PushCString(Arena* arena, String str);
 
 static String Arena_VPrintf(Arena* arena, const char* fmt, va_list args);
 static String Arena_Printf(Arena* arena, const char* fmt, ...);
@@ -66,8 +69,8 @@ static inline void            Arena_Restore(Arena_Savepoint savepoint);
 
 #ifndef Arena_OsReserve_
 #   if defined(_WIN32)
-extern void* __stdcall VirtualAlloc(void* base, uintsize size, unsigned long type, unsigned long protect);
-extern int32 __stdcall VirtualFree(void* base, uintsize size, unsigned long type);
+externC_ void* __stdcall VirtualAlloc(void* base, uintsize size, unsigned long type, unsigned long protect);
+externC_ int32 __stdcall VirtualFree(void* base, uintsize size, unsigned long type);
 #       define Arena_OsReserve_(size) VirtualAlloc(NULL,size,0x00002000/*MEM_RESERVE*/,0x04/*PAGE_READWRITE*/)
 #       define Arena_OsCommit_(ptr, size) VirtualAlloc(ptr,size,0x00001000/*MEM_COMMIT*/,0x04/*PAGE_READWRITE*/)
 #       define Arena_OsFree_(ptr, size) ((void)(size), VirtualFree(ptr,0,0x00008000/*MEM_RELEASE*/))
@@ -93,9 +96,11 @@ Arena_Create(uintsize reserved, uintsize page_size)
 	
 	reserved = AlignUp(reserved, page_size-1);
 	Arena* result = (Arena*)Arena_OsReserve_(reserved);
+	SafeAssert(result);
+	
 	if (result)
 	{
-		Arena_OsCommit_(result, page_size);
+		SafeAssert(Arena_OsCommit_(result, page_size));
 		
 		result->reserved = reserved;
 		result->commited = page_size;
@@ -129,7 +134,7 @@ Arena_FromUncommitedMemory(void* memory, uintsize reserved, uintsize page_size)
 	Assert(reserved >= page_size);
 	
 	reserved = AlignDown(reserved, page_size-1);
-	Arena_OsCommit_(memory, page_size);
+	SafeAssert(Arena_OsCommit_(memory, page_size));
 	
 	Arena* result = (Arena*)memory;
 	result->reserved = reserved;
@@ -169,9 +174,9 @@ Arena_PushDirtyAligned(Arena* arena, uintsize size, uintsize alignment)
 			return NULL;
 		
 		uintsize size_to_commit = AlignUp(needed - arena->commited, arena->page_size-1);
-		Assert(size_to_commit + arena->commited <= arena->reserved);
+		SafeAssert(size_to_commit + arena->commited <= arena->reserved);
 		
-		Arena_OsCommit_((uint8*)arena + arena->commited, size_to_commit);
+		SafeAssert(Arena_OsCommit_((uint8*)arena + arena->commited, size_to_commit));
 		arena->commited += size_to_commit;
 	}
 	
@@ -231,6 +236,15 @@ Arena_Save(Arena* arena)
 	return ret;
 }
 
+static inline const char*
+Arena_PushCString(Arena* arena, String str)
+{
+	char* buffer = (char*)Arena_PushDirtyAligned(arena, str.size + 1, 1);
+	Mem_Copy(buffer, str.data, str.size);
+	buffer[str.size] = 0;
+	return buffer;
+}
+
 static inline void
 Arena_Restore(Arena_Savepoint savepoint)
 { savepoint.arena->offset = savepoint.offset; }
@@ -241,11 +255,11 @@ Arena_PushDirty(Arena* arena, uintsize size)
 
 static inline void*
 Arena_PushAligned(Arena* arena, uintsize size, uintsize alignment)
-{ return Mem_Set(Arena_PushDirtyAligned(arena, size, alignment), 0, size); }
+{ return Mem_Zero(Arena_PushDirtyAligned(arena, size, alignment), size); }
 
 static inline void*
 Arena_Push(Arena* arena, uintsize size)
-{ return Mem_Set(Arena_PushDirtyAligned(arena, size, Arena_DEFAULT_ALIGNMENT), 0, size); }
+{ return Mem_Zero(Arena_PushDirtyAligned(arena, size, Arena_DEFAULT_ALIGNMENT), size); }
 
 static inline void*
 Arena_PushMemory(Arena* arena, const void* buf, uintsize size)
@@ -270,9 +284,5 @@ Arena_Clear(Arena* arena)
 static inline void*
 Arena_End(Arena* arena)
 { return arena->memory + arena->offset; }
-
-#undef Arena_OsReserve_
-#undef Arena_OsCommit_
-#undef Arena_OsFree_
 
 #endif // COMMON_ARENA_H

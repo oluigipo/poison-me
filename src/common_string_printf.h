@@ -297,7 +297,7 @@ String_PrintfFunc_(char* buf, uintsize buf_size, const char* restrict fmt, va_li
 						len = Mem_Strlen(arg);
 					else
 					{
-						const char* off = Mem_FindByte(arg, 0, trailling_padding);
+						const char* off = (const char*)Mem_FindByte(arg, 0, trailling_padding);
 						len = off ? off - arg : trailling_padding;
 					}
 					
@@ -650,7 +650,7 @@ String_PrintfFunc_(char* buf, uintsize buf_size, const char* restrict fmt, va_li
 						len = Mem_Strlen(arg);
 					else
 					{
-						const char* off = Mem_FindByte(arg, 0, trailling_padding);
+						const char* off = (const char*)Mem_FindByte(arg, 0, trailling_padding);
 						len = off ? off - arg : trailling_padding;
 					}
 					

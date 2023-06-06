@@ -29,7 +29,10 @@ static inline void Mem_Copy128Ux4(void* dst, const void* src, uintsize count);
 static inline void Mem_Copy128Ax4(void* dst, const void* src, uintsize count);
 
 static inline uintsize Mem_Strlen(const char* restrict cstr);
+static inline int32 Mem_Strcmp(const char* left, const char* right);
 static inline const void* Mem_FindByte(const void* buffer, uint8 byte, uintsize size);
+static inline void* Mem_Zero(void* restrict dst, uintsize size);
+static inline void* Mem_ZeroSafe(void* restrict dst, uintsize size);
 
 static inline void* Mem_Copy(void* restrict dst, const void* restrict src, uintsize size);
 static inline void* Mem_Move(void* dst, const void* src, uintsize size);
@@ -340,6 +343,26 @@ Mem_Copy128Ax4(void* dst, const void* src, uintsize count)
 		s += 4;
 	}
 }
+
+#if defined(_MSC_VER) && !defined(__clang__)
+#   pragma optimize("", off)
+#endif
+static inline void*
+Mem_ZeroSafe(void* restrict dst, uintsize size)
+{
+	Mem_Zero(dst, size);
+#if defined(__GNUC__) || defined(__clang__)
+	__asm__ __volatile__ ("" : "+d"(dst) :: "memory");
+#elif defined(_MSC_VER)
+	_ReadWriteBarrier();
+#else
+	// TODO
+#endif
+	return dst;
+}
+#if defined(_MSC_VER) && !defined(__clang__)
+#   pragma optimize("", on)
+#endif
 
 //- CRT memcpy, memmove, memset & memcmp functions
 #ifdef COMMON_DONT_USE_CRT
@@ -752,6 +775,20 @@ Mem_Strlen(const char* restrict cstr)
 	return cstr - begin;
 }
 
+static inline int32
+Mem_Strcmp(const char* left, const char* right)
+{
+	for (;;)
+	{
+		if (*left != *right)
+			return *left - *right;
+		if (!*left)
+			return 0;
+		++left;
+		++right;
+	}
+}
+
 static inline const void*
 Mem_FindByte(const void* buffer, uint8 byte, uintsize size)
 {
@@ -764,20 +801,22 @@ Mem_FindByte(const void* buffer, uint8 byte, uintsize size)
 		goto by_byte;
 	
 	// NOTE(ljre): XMM by XMM
-	__m128i mask = _mm_set1_epi8(byte);
-	
+	{
+		__m128i mask = _mm_set1_epi8(byte);
+		
 #ifdef __clang__
 #   pragma clang loop vectorize(disable)
 #endif
-	while (buf + 16 < end)
-	{
-		__m128i data = _mm_loadu_si128((const __m128i*)buf);
-		int32 cmp = _mm_movemask_epi8(_mm_cmpeq_epi8(data, mask));
-		
-		if (Unlikely(cmp != 0))
-			return buf + Mem_BitCtz16((uint16)cmp);
-		
-		buf += 16;
+		while (buf + 16 < end)
+		{
+			__m128i data = _mm_loadu_si128((const __m128i*)buf);
+			int32 cmp = _mm_movemask_epi8(_mm_cmpeq_epi8(data, mask));
+			
+			if (Unlikely(cmp != 0))
+				return buf + Mem_BitCtz16((uint16)cmp);
+			
+			buf += 16;
+		}
 	}
 	
 	// NOTE(ljre): Byte by byte
@@ -794,6 +833,89 @@ Mem_FindByte(const void* buffer, uint8 byte, uintsize size)
 	
 	// NOTE(ljre): byte wasn't found.
 	return NULL;
+}
+
+static inline void*
+Mem_Zero(void* restrict dst, uintsize size)
+{
+	uint8* restrict d = (uint8*)dst;
+	__m128 mzero = _mm_setzero_ps();
+	
+	if (Unlikely(size == 0))
+		return dst;
+	if (size < 8)
+		goto by_byte;
+	if (size < 32)
+		goto by_qword;
+	if (size < 128)
+		goto by_xmm2;
+	
+#if defined(__clang__) || defined(__GNUC__) || defined(_MSC_VER)
+	if (Unlikely(size >= 2048))
+	{
+#   if defined(__clang__) || defined(__GNUC__)
+		uint8 byte = 0;
+		__asm__ __volatile__("rep stosb"
+			:"+D"(d), "+a"(byte), "+c"(size)
+			:: "memory");
+#   elif defined(_MSC_VER)
+		__stosb(d, 0, size);
+#   endif
+		
+		return dst;
+	}
+#endif
+	
+#ifdef __clang__
+#   pragma clang loop vectorize(disable)
+#endif
+	do
+	{
+		_mm_storeu_ps((float*)(d+  0), mzero);
+		_mm_storeu_ps((float*)(d+ 16), mzero);
+		_mm_storeu_ps((float*)(d+ 32), mzero);
+		_mm_storeu_ps((float*)(d+ 48), mzero);
+		_mm_storeu_ps((float*)(d+ 64), mzero);
+		_mm_storeu_ps((float*)(d+ 80), mzero);
+		_mm_storeu_ps((float*)(d+ 96), mzero);
+		_mm_storeu_ps((float*)(d+112), mzero);
+		size -= 128;
+		d += 128;
+	}
+	while (size >= 128);
+	
+#ifdef __clang__
+#   pragma clang loop vectorize(disable)
+#endif
+	while (size >= 32) by_xmm2:
+	{
+		_mm_storeu_ps((float*)(d+ 0), mzero);
+		_mm_storeu_ps((float*)(d+16), mzero);
+		size -= 32;
+		d += 32;
+	}
+	
+#ifdef __clang__
+#   pragma clang loop vectorize(disable)
+#endif
+	while (size >= 8) by_qword:
+	{
+		*(uint64*)d = 0;
+		size -= 8;
+		d += 8;
+	}
+	
+#ifdef __clang__
+#   pragma clang loop vectorize(disable)
+#endif
+	while (size >= 1) by_byte:
+	{
+		*d = 0;
+		size -= 1;
+		d += 1;
+	}
+	
+	return dst;
 }
 
 #else // COMMON_DONT_USE_CRT
@@ -820,9 +942,17 @@ static inline uintsize
 Mem_Strlen(const char* restrict cstr)
 { return strlen(cstr); }
 
+static inline int32
+Mem_Strcmp(const char* left, const char* right)
+{ return strcmp(left, right); }
+
 static inline const void*
 Mem_FindByte(const void* buffer, uint8 byte, uintsize size)
 { return memchr(buffer, byte, size); }
+
+static inline void*
+Mem_Zero(void* restrict dst, uintsize size)
+{ return memset(dst, 0, size); }
 
 #endif
 

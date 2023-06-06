@@ -127,7 +127,6 @@ OS_WriteWholeFile(String path, String data, Arena* scratch_arena, OS_Error* out_
 	MultiByteToWideChar(CP_UTF8, 0, (const char*)path.data, path.size, wpath, wpath_len);
 	wpath[wpath_len-1] = 0;
 	
-	
 	bool result = true;
 	HANDLE file = CreateFileW(wpath, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, NULL);
 	
@@ -169,6 +168,69 @@ OS_GetPosixTimestamp(void)
 	result -= posix_time.dwLowDateTime | (uint64)posix_time.dwHighDateTime << 32;
 	
 	return result;
+}
+
+API String
+OS_ResolveFullPath(String path, Arena* output_arena, OS_Error* out_err)
+{
+	Mem_Set(out_err, 0, sizeof(*out_err));
+	out_err->ok = true;
+	uint8* base = Arena_End(output_arena);
+	
+	int32 wpath_len = MultiByteToWideChar(CP_UTF8, 0, (const char*)path.data, path.size, NULL, 0) + 1;
+	if (wpath_len <= 0)
+	{
+		SetErrorInfo(out_err);
+		return StrNull;
+	}
+	
+	wchar_t* wpath = Arena_PushDirtyAligned(output_arena, wpath_len * sizeof(*wpath), 2);
+	MultiByteToWideChar(CP_UTF8, 0, (const char*)path.data, path.size, wpath, wpath_len);
+	wpath[wpath_len-1] = 0;
+	
+	wchar_t little_tmp[2];
+	DWORD wfullpath_len = GetFullPathNameW(wpath, ArrayLength(little_tmp), little_tmp, NULL) + 1;
+	
+	wchar_t* wfullpath = Arena_PushDirtyAligned(output_arena, wfullpath_len * sizeof(*wfullpath), 2);
+	wfullpath_len = GetFullPathNameW(wpath, wfullpath_len, wfullpath, NULL);
+	
+	int32 fullpath_len = WideCharToMultiByte(CP_UTF8, 0, wfullpath, wfullpath_len, NULL, 0, NULL, NULL);
+	if (fullpath_len <= 0)
+	{
+		Arena_Pop(output_arena, base);
+		SetErrorInfo(out_err);
+		return StrNull;
+	}
+	
+	char* fullpath = Arena_PushDirtyAligned(output_arena, fullpath_len, 1);
+	WideCharToMultiByte(CP_UTF8, 0, wfullpath, wfullpath_len, fullpath, fullpath_len, NULL, NULL);
+	
+	Mem_Move(base, fullpath, fullpath_len);
+	Arena_Pop(output_arena, base + fullpath_len);
+	
+	return StrMake(fullpath_len, base);
+}
+
+API void
+OS_SplitPath(String fullpath, String* out_folder, String* out_file)
+{
+	String folder = StrNull;
+	String file = fullpath;
+	
+	for (intsize i = fullpath.size-1; i >= 0; --i)
+	{
+		if (fullpath.data[i] == '/' || fullpath.data[i] == '\\')
+		{
+			folder = StrMake(i, fullpath.data);
+			file = StrMake(fullpath.size - i, fullpath.data + i);
+			break;
+		}
+	}
+	
+	if (out_folder)
+		*out_folder = folder;
+	if (out_file)
+		*out_file = file;
 }
 
 API bool
